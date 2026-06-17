@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calculadora MeLi</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:#f0f0f0;font-family:'DM Mono','Courier New',monospace;min-height:100vh;padding:32px 24px}
+.container{max-width:1060px;margin:0 auto}
+.header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid #1e1e1e}
+.badge{background:#FFE11A;color:#000;font-size:11px;font-weight:800;padding:3px 8px;border-radius:4px;letter-spacing:1px;display:inline-block;margin-bottom:6px}
+.header h1{font-size:22px;font-weight:800;letter-spacing:-0.5px}
+.header-sub{font-size:12px;color:#555;margin-top:4px}
+.auth-card{background:#111;border:1px solid #FFE11A30;border-radius:16px;padding:48px 32px;text-align:center;margin-bottom:28px}
+.auth-card h2{font-size:20px;margin-bottom:10px}
+.auth-card p{color:#666;font-size:13px;margin-bottom:28px;line-height:1.6}
+.btn-meli{background:#FFE11A;color:#000;border:none;border-radius:10px;padding:14px 36px;font-size:15px;font-weight:800;cursor:pointer;font-family:'DM Mono',monospace;transition:opacity 0.2s;display:inline-flex;align-items:center;gap:10px}
+.btn-meli:hover{opacity:0.85}
+.connected-bar{background:#51cf6614;border:1px solid #51cf6640;border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;margin-bottom:24px;font-size:13px}
+.dot{width:8px;height:8px;background:#51cf66;border-radius:50%;flex-shrink:0;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.logout-btn{margin-left:auto;color:#555;font-size:12px;cursor:pointer;background:none;border:none;font-family:'DM Mono',monospace;padding:4px 8px;border-radius:4px}
+.logout-btn:hover{color:#ff6b6b}
+.config-bar{background:#111;border:1px solid #FFE11A22;border-radius:12px;padding:14px 20px;margin-bottom:20px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.config-label{font-size:11px;color:#FFE11A;text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+.config-group{display:flex;align-items:center;gap:8px}
+.config-group label{font-size:11px;color:#666;white-space:nowrap}
+.config-group input{background:#1a1a1a;border:1px solid #FFE11A40;border-radius:6px;padding:6px 10px;color:#FFE11A;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;width:72px;outline:none}
+.config-group input:focus{border-color:#FFE11A}
+.filter-bar{background:#111;border:1px solid #222;border-radius:12px;padding:14px 20px;margin-bottom:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.filter-bar label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:8px}
+.filter-bar input[type=date]{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:7px 12px;color:#f0f0f0;font-family:'DM Mono',monospace;font-size:13px;outline:none;color-scheme:dark}
+.filter-bar input[type=date]:focus{border-color:#FFE11A}
+.btn-load{background:#FFE11A;color:#000;border:none;border-radius:8px;padding:8px 22px;font-size:13px;font-weight:800;cursor:pointer;font-family:'DM Mono',monospace;margin-left:auto}
+.btn-load:hover{opacity:0.85}
+.btn-load:disabled{opacity:0.4;cursor:not-allowed}
+.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.metric-card{background:#111;border:1px solid #222;border-radius:12px;padding:18px}
+.mlabel{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.mvalue{font-size:22px;font-weight:800;font-family:'DM Mono',monospace}
+.msub{font-size:11px;color:#444;margin-top:5px}
+.table-wrap{background:#111;border:1px solid #222;border-radius:16px;overflow:hidden;margin-bottom:28px}
+.table-header{background:#161616;padding:14px 20px;font-size:11px;color:#FFE11A;text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid #222;display:flex;align-items:center;justify-content:space-between}
+table{width:100%;border-collapse:collapse}
+th{padding:10px 16px;text-align:left;font-size:11px;color:#444;text-transform:uppercase;letter-spacing:1px;font-weight:500;border-bottom:1px solid #1e1e1e;white-space:nowrap}
+td{padding:11px 16px;font-size:12px;border-bottom:1px solid #161616;font-family:'DM Mono',monospace}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#131313}
+.pos{color:#51cf66}
+.neg{color:#ff6b6b}
+.neutral{color:#888}
+.loading{text-align:center;padding:48px;color:#444;font-size:14px}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid #2a2a2a;border-top-color:#FFE11A;border-radius:50%;animation:spin 0.7s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:56px;color:#333;font-size:14px}
+.error-box{background:#ff6b6b12;border:1px solid #ff6b6b30;border-radius:10px;padding:16px 20px;color:#ff6b6b;font-size:13px;margin-bottom:20px}
+.pagination{display:flex;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #1a1a1a;font-size:12px;color:#555}
+.btn-page{background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:6px;padding:6px 14px;cursor:pointer;font-family:'DM Mono',monospace;font-size:12px}
+.btn-page:hover:not(:disabled){border-color:#FFE11A;color:#FFE11A}
+.btn-page:disabled{opacity:0.3;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <div><span class="badge">MELI</span></div>
+      <h1>Calculadora de Ganancia</h1>
+      <div class="header-sub">Ventas reales · Comisiones · Envíos · IIBB · Percepciones · TACOS · CPA · ROAS</div>
+    </div>
+  </div>
+  <div id="app"></div>
+</div>
+
+<script>
+const CLIENT_ID = "820259386035678";
+const REDIRECT_URI = window.location.origin + "/callback";
+
+let state = {
+  token: localStorage.getItem("meli_token"),
+  userId: localStorage.getItem("meli_user_id"),
+  nickname: localStorage.getItem("meli_nickname"),
+  percepcionesPct: parseFloat(localStorage.getItem("percepcionesPct") || "7.01"),
+  iibbPct: parseFloat(localStorage.getItem("iibbPct") || "4"),
+  orders: [],
+  page: 0,
+  total: 0,
+  loading: false,
+  error: null,
+};
+
+const PAGE_SIZE = 50;
+
+function fmt(n) {
+  if (isNaN(n) || n === null) return "—";
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
+}
+function pct(n) {
+  if (isNaN(n) || !isFinite(n)) return "—";
+  return (n * 100).toFixed(1) + "%";
+}
+function today() { return new Date().toISOString().split("T")[0]; }
+function firstOfMonth() {
+  const d = new Date(); d.setDate(1);
+  return d.toISOString().split("T")[0];
+}
+
+function calcOrder(o) {
+  const precio = o.total_amount || 0;
+  const comision = Math.abs(o.marketplace_fee || 0);
+  const envio = o.shipping?.cost || 0;
+  const iibb = precio * (state.iibbPct / 100);
+  const percepciones = precio * (state.percepcionesPct / 100);
+  const costos = comision + envio + iibb + percepciones;
+  const ganancia = precio - costos;
+  const margen = precio > 0 ? ganancia / precio : 0;
+  return { precio, comision, envio, iibb, percepciones, costos, ganancia, margen };
+}
+
+async function apiFn(name, params) {
+  const qs = new URLSearchParams(params).toString();
+  const r = await fetch(`/.netlify/functions/${name}?${qs}`);
+  return r.json();
+}
+
+// Check callback
+async function handleCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  if (!code) return false;
+  window.history.replaceState({}, "", "/");
+  const res = await apiFn("auth", { code });
+  if (res.access_token) {
+    state.token = res.access_token;
+    state.userId = String(res.user_id);
+    localStorage.setItem("meli_token", state.token);
+    localStorage.setItem("meli_user_id", state.userId);
+    const user = await apiFn("user", { token: state.token, user_id: state.userId });
+    state.nickname = user.nickname || "Usuario";
+    localStorage.setItem("meli_nickname", state.nickname);
+    return true;
+  }
+  return false;
+}
+
+function doLogin() {
+  const url = `https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
+  window.location.href = url;
+}
+
+function doLogout() {
+  localStorage.clear();
+  state.token = null; state.userId = null; state.nickname = null; state.orders = [];
+  render();
+}
+
+function renderLogin() {
+  document.getElementById("app").innerHTML = `
+    <div class="auth-card">
+      <h2>Conectá tu cuenta de Mercado Libre</h2>
+      <p>Autorizá el acceso de solo lectura para traer tus ventas,<br>comisiones y envíos reales automáticamente.</p>
+      <button class="btn-meli" onclick="doLogin()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#FFE11A" stroke="#000" stroke-width="1.5"/><path d="M7 12l3 3 7-7" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg>
+        Conectar con Mercado Libre
+      </button>
+    </div>`;
+}
+
+function getDateRange() {
+  return { from: document.getElementById("dateFrom")?.value || firstOfMonth(), to: document.getElementById("dateTo")?.value || today() };
+}
+
+async function loadOrders() {
+  const { from, to } = getDateRange();
+  state.loading = true; state.error = null;
+  renderResults();
+  try {
+    const data = await apiFn("orders", { token: state.token, user_id: state.userId, from, to, offset: state.page * PAGE_SIZE });
+    state.orders = data.results || [];
+    state.total = data.paging?.total || state.orders.length;
+  } catch (e) {
+    state.error = e.message;
+    state.orders = [];
+  }
+  state.loading = false;
+  renderResults();
+}
+
+function renderResults() {
+  const el = document.getElementById("results");
+  if (!el) return;
+
+  if (state.loading) {
+    el.innerHTML = `<div class="loading"><span class="spinner"></span>Cargando ventas de MeLi...</div>`;
+    return;
+  }
+  if (state.error) {
+    el.innerHTML = `<div class="error-box">Error: ${state.error}</div>`;
+    return;
+  }
+  if (!state.orders.length) {
+    el.innerHTML = `<div class="empty">No hay ventas en ese período.</div>`;
+    return;
+  }
+
+  const calcs = state.orders.map(o => ({ ...o, ...calcOrder(o) }));
+  const totalVentas = calcs.reduce((s, o) => s + o.precio, 0);
+  const totalGanancia = calcs.reduce((s, o) => s + o.ganancia, 0);
+  const totalComisiones = calcs.reduce((s, o) => s + o.comision, 0);
+  const totalEnvios = calcs.reduce((s, o) => s + o.envio, 0);
+  const totalIIBB = calcs.reduce((s, o) => s + o.iibb, 0);
+  const totalPercepciones = calcs.reduce((s, o) => s + o.percepciones, 0);
+  const margenGlobal = totalVentas > 0 ? totalGanancia / totalVentas : 0;
+
+  el.innerHTML = `
+    <div class="summary-grid">
+      <div class="metric-card"><div class="mlabel">Ventas brutas</div><div class="mvalue" style="color:#74b9ff">${fmt(totalVentas)}</div><div class="msub">${calcs.length} órdenes cargadas · ${state.total} total</div></div>
+      <div class="metric-card"><div class="mlabel">Ganancia neta</div><div class="mvalue ${totalGanancia >= 0 ? "pos" : "neg"}">${fmt(totalGanancia)}</div><div class="msub">Margen: ${pct(margenGlobal)}</div></div>
+      <div class="metric-card"><div class="mlabel">Total costos</div><div class="mvalue neg">${fmt(totalVentas - totalGanancia)}</div><div class="msub">Comisiones + envíos + impuestos</div></div>
+    </div>
+    <div class="summary-grid">
+      <div class="metric-card"><div class="mlabel">Comisiones MeLi</div><div class="mvalue" style="color:#ffd43b">${fmt(totalComisiones)}</div></div>
+      <div class="metric-card"><div class="mlabel">Costos de envío</div><div class="mvalue" style="color:#fd79a8">${fmt(totalEnvios)}</div></div>
+      <div class="metric-card"><div class="mlabel">IIBB + Percepciones</div><div class="mvalue" style="color:#a29bfe">${fmt(totalIIBB + totalPercepciones)}</div><div class="msub">Est. ${state.iibbPct}% IIBB + ${state.percepcionesPct}% percep.</div></div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header">
+        <span>▸ Detalle de órdenes</span>
+        <span style="color:#555;font-weight:400">${calcs.length} ventas mostradas</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Producto</th><th>Fecha</th><th>Precio</th><th>Comisión</th><th>Envío</th><th>IIBB</th><th>Percep.</th><th>Ganancia</th><th>Margen</th>
+        </tr></thead>
+        <tbody>
+          ${calcs.map(o => {
+            const title = o.order_items?.[0]?.item?.title || "—";
+            const fecha = o.date_created ? o.date_created.split("T")[0] : "—";
+            return `<tr>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}</td>
+              <td class="neutral">${fecha}</td>
+              <td>${fmt(o.precio)}</td>
+              <td class="neg">${fmt(-o.comision)}</td>
+              <td class="neg">${fmt(-o.envio)}</td>
+              <td class="neg">${fmt(-o.iibb)}</td>
+              <td class="neg">${fmt(-o.percepciones)}</td>
+              <td class="${o.ganancia >= 0 ? "pos" : "neg"}">${fmt(o.ganancia)}</td>
+              <td class="${o.margen >= 0 ? "pos" : "neg"}">${pct(o.margen)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+      <div class="pagination">
+        <button class="btn-page" onclick="prevPage()" ${state.page === 0 ? "disabled" : ""}>← Anterior</button>
+        <span>Página ${state.page + 1} · ${state.total} ventas totales</span>
+        <button class="btn-page" onclick="nextPage()" ${(state.page + 1) * PAGE_SIZE >= state.total ? "disabled" : ""}>Siguiente →</button>
+      </div>
+    </div>`;
+}
+
+function prevPage() { if (state.page > 0) { state.page--; loadOrders(); } }
+function nextPage() { state.page++; loadOrders(); }
+
+function renderDashboard() {
+  document.getElementById("app").innerHTML = `
+    <div class="connected-bar">
+      <div class="dot"></div>
+      <span>Conectado como <strong>${state.nickname}</strong></span>
+      <button class="logout-btn" onclick="doLogout()">Desconectar</button>
+    </div>
+    <div class="config-bar">
+      <span class="config-label">⚙ Config</span>
+      <div class="config-group"><label>Percepciones</label><input id="percPct" type="number" value="${state.percepcionesPct}" step="0.1" min="0"> %</div>
+      <div class="config-group"><label>IIBB ret.</label><input id="iibbPctI" type="number" value="${state.iibbPct}" step="0.1" min="0"> %</div>
+      <span style="font-size:11px;color:#333">· actualizá con tu factura real</span>
+    </div>
+    <div class="filter-bar">
+      <label>Desde <input type="date" id="dateFrom" value="${firstOfMonth()}"></label>
+      <label>Hasta <input type="date" id="dateTo" value="${today()}"></label>
+      <button class="btn-load" id="btnLoad" onclick="onLoad()">Cargar ventas</button>
+    </div>
+    <div id="results"><div class="empty">Seleccioná un período y hacé clic en "Cargar ventas".</div></div>`;
+
+  document.getElementById("percPct").onchange = e => {
+    state.percepcionesPct = parseFloat(e.target.value) || 7.01;
+    localStorage.setItem("percepcionesPct", state.percepcionesPct);
+    if (state.orders.length) renderResults();
+  };
+  document.getElementById("iibbPctI").onchange = e => {
+    state.iibbPct = parseFloat(e.target.value) || 4;
+    localStorage.setItem("iibbPct", state.iibbPct);
+    if (state.orders.length) renderResults();
+  };
+
+  loadOrders();
+}
+
+function onLoad() {
+  state.page = 0;
+  loadOrders();
+}
+
+async function render() {
+  await handleCallback();
+  if (state.token) {
+    renderDashboard();
+  } else {
+    renderLogin();
+  }
+}
+
+render();
+</script>
+</body>
+</html>
