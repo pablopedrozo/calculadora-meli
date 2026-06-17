@@ -12,7 +12,10 @@ function apiGet(path, token) {
     const req = https.request(options, (res) => {
       let raw = "";
       res.on("data", (c) => (raw += c));
-      res.on("end", () => { try { resolve(JSON.parse(raw)); } catch (e) { reject(e); } });
+      res.on("end", () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+        catch (e) { reject(e); }
+      });
     });
     req.on("error", reject);
     req.end();
@@ -23,27 +26,39 @@ exports.handler = async (event) => {
   const { token, user_id, from, to } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
+  const debug = {};
+
   try {
-    // Get advertiser account
-    const advertiser = await apiGet(`/advertising/product_ads/advertisers/${user_id}`, token);
-    if (!advertiser || advertiser.error) {
-      return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false }) };
+    // Step 1: check advertiser account
+    const adv = await apiGet(`/advertising/product_ads/advertisers/${user_id}`, token);
+    debug.advertiser_status = adv.status;
+    debug.advertiser_body = adv.body;
+
+    if (adv.status !== 200 || adv.body?.error) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ total_spent: 0, available: false, debug }),
+      };
     }
 
-    // Get daily performance report
-    const report = await apiGet(
+    // Step 2: daily performance report
+    const rep = await apiGet(
       `/advertising/product_ads/advertisers/${user_id}/reports/daily_performance?date_from=${from}&date_to=${to}`,
       token
     );
+    debug.report_status = rep.status;
+    debug.report_body = rep.body;
 
-    const total_spent = (report.daily_performance || []).reduce((s, d) => s + (d.total_amount || 0), 0);
+    const days = rep.body?.daily_performance || [];
+    const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ total_spent, available: true, days: report.daily_performance || [] }),
+      body: JSON.stringify({ total_spent, available: true, days, debug }),
     };
   } catch (e) {
-    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: e.message }) };
+    debug.exception = e.message;
+    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, debug }) };
   }
 };
