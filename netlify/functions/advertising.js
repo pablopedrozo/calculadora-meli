@@ -26,60 +26,51 @@ exports.handler = async (event) => {
   const { token, user_id, from, to } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
-  // Try every known MeLi advertising endpoint variant
-  const attempts = await Promise.all([
-    apiGet(`/advertising/product_ads/advertisers`, token),
-    apiGet(`/advertising/product_ads/advertisers?user_id=${user_id}`, token),
-    apiGet(`/advertising/product_ads/advertisers/${user_id}`, token),
-    apiGet(`/advertising/product_ads/advertisers/${user_id}/reports/daily_performance?date_from=${from}&date_to=${to}`, token),
-    apiGet(`/advertising/product_ads/advertisers?limit=10`, token),
-  ]);
+  // Try every possible MeLi advertising endpoint for Argentina
+  const paths = [
+    `/advertising/product_ads/advertisers/${user_id}`,
+    `/advertising/product_ads/advertisers`,
+    `/advertising/product_ads/advertisers?user_id=${user_id}&site_id=MLA`,
+    `/sites/MLA/advertising/product_ads/advertisers/${user_id}`,
+    `/sites/MLA/advertising/advertisers/${user_id}`,
+    `/advertising/advertisers/${user_id}`,
+    `/advertising/advertisers?user_id=${user_id}`,
+    `/advertising/${user_id}`,
+    `/users/${user_id}/advertising`,
+    `/users/${user_id}/advertising/campaigns`,
+  ];
 
-  const debug = {
-    "GET /advertisers": { status: attempts[0].status, body: attempts[0].body },
-    "GET /advertisers?user_id": { status: attempts[1].status, body: attempts[1].body },
-    "GET /advertisers/{user_id}": { status: attempts[2].status, body: attempts[2].body },
-    "GET /advertisers/{user_id}/reports": { status: attempts[3].status, body: attempts[3].body },
-    "GET /advertisers?limit=10": { status: attempts[4].status, body: attempts[4].body },
-  };
-
-  // Try to find a working advertiser and report
-  let total_spent = 0;
-  let available = false;
-
-  // Check if list endpoint works
-  for (const attempt of [attempts[0], attempts[1], attempts[4]]) {
-    if (attempt.status === 200) {
-      const body = attempt.body;
-      let advId = null;
-      if (Array.isArray(body)) advId = body[0]?.id;
-      else if (body?.advertisers) advId = body.advertisers[0]?.id;
-      else if (body?.results) advId = body.results[0]?.id;
-      else if (body?.id) advId = body.id;
-
-      if (advId) {
-        const rep = await apiGet(`/advertising/product_ads/advertisers/${advId}/reports/daily_performance?date_from=${from}&date_to=${to}`, token);
-        debug.report_via_list = { advId, status: rep.status, body: rep.body };
-        if (rep.status === 200) {
-          const days = rep.body?.daily_performance || [];
-          total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
-          available = true;
-        }
-        break;
-      }
-    }
+  const results = {};
+  for (const p of paths) {
+    const r = await apiGet(p, token);
+    results[p] = { status: r.status, body: r.status !== 404 ? r.body : "404" };
   }
 
-  // Check direct report (attempt[3])
-  if (!available && attempts[3].status === 200) {
-    const days = attempts[3].body?.daily_performance || [];
-    total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
-    available = true;
+  // Find first working endpoint
+  const working = Object.entries(results).find(([, v]) => v.status === 200);
+
+  if (!working) {
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ total_spent: 0, available: false, debug: results }),
+    };
   }
+
+  // Try to get spending from working endpoint
+  const [workingPath, workingData] = working;
+  const advId = workingData.body?.id || workingData.body?.advertiser_id || user_id;
+
+  const rep = await apiGet(
+    `/advertising/product_ads/advertisers/${advId}/reports/daily_performance?date_from=${from}&date_to=${to}`,
+    token
+  );
+
+  const days = rep.body?.daily_performance || [];
+  const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
 
   return {
     statusCode: 200,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent, available, debug }),
+    body: JSON.stringify({ total_spent, available: total_spent > 0, working_endpoint: workingPath, debug: results }),
   };
 };
