@@ -278,11 +278,15 @@ async function handleCallback(){
 
 function doLogin(){
   const scopes = "offline_access read_catalog read_orders write_orders advertising_read";
-  window.location.href=`https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&approval_prompt=force`;
+  const rand = Math.random().toString(36).slice(2);
+  window.location.href=`https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&state=${rand}`;
 }
 function doLogout(){
+  const token = S.token;
   localStorage.clear(); S.productCosts={};
   Object.assign(S,{token:null,userId:null,nickname:null,orders:[],total:0,publiARS:0,publiFromAPI:false});
+  // Revoke token on MeLi side so next login forces new scope selection
+  if(token) fetch(`/.netlify/functions/revoke?token=${token}`).catch(()=>{});
   render();
 }
 
