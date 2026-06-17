@@ -35,33 +35,28 @@ exports.handler = async (event) => {
   const ADV_ID = 703867;
   const debug = {};
 
-  // Try POST to campaigns endpoint
-  const postBody = { advertiser_id: ADV_ID, date_from: from, date_to: to };
-  const postAttempts = await Promise.all([
-    apiRequest(`/advertising/product_ads/campaigns`, token, "POST", postBody),
-    apiRequest(`/advertising/product_ads/campaigns?advertiser_id=${ADV_ID}`, token, "POST", { date_from: from, date_to: to }),
-    apiRequest(`/advertising/product_ads/advertisers/${ADV_ID}/campaigns`, token, "POST", { date_from: from, date_to: to }),
-    apiRequest(`/advertising/product_ads/advertisers/${ADV_ID}/campaigns`, token, "GET"),
-    apiRequest(`/advertising/product_ads/advertisers/${ADV_ID}/ads`, token, "GET"),
-    apiRequest(`/advertising/product_ads/advertisers/${ADV_ID}/reports`, token, "GET"),
-    apiRequest(`/advertising/product_ads/advertisers/${ADV_ID}/reports`, token, "POST", { date_from: from, date_to: to }),
-  ]);
+  const paths = [
+    ["GET", `/advertising/product_ads/${ADV_ID}/campaigns`],
+    ["GET", `/pads/advertisers/${ADV_ID}/campaigns`],
+    ["GET", `/pads/advertisers/${ADV_ID}/reports?date_from=${from}&date_to=${to}`],
+    ["GET", `/advertising/product_ads/campaigns/${ADV_ID}`],
+    ["GET", `/advertising/product_ads/advertisers/${ADV_ID}/campaigns/search`],
+    ["POST", `/advertising/product_ads/advertisers/${ADV_ID}/campaigns/search`, { date_from: from, date_to: to }],
+    ["GET", `/advertising/product_ads/advertisers/${ADV_ID}/summary?date_from=${from}&date_to=${to}`],
+    ["GET", `/users/${user_id}/advertising/product_ads?date_from=${from}&date_to=${to}`],
+    ["GET", `/billing/debts/users/${user_id}?category=advertising`],
+    ["GET", `/users/${user_id}/payments?category=advertising&date_from=${from}&date_to=${to}`],
+  ];
 
-  const labels = ["POST /campaigns (body adv_id)", "POST /campaigns?adv_id", "POST /advertisers/{id}/campaigns", "GET /advertisers/{id}/campaigns", "GET /advertisers/{id}/ads", "GET /advertisers/{id}/reports", "POST /advertisers/{id}/reports"];
-  postAttempts.forEach((r, i) => { debug[labels[i]] = { status: r.status, body: r.body }; });
+  for (const [method, path, body] of paths) {
+    const r = await apiRequest(path, token, method, body || null);
+    debug[`${method} ${path}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
+  }
 
-  // Find working endpoint
-  const working = postAttempts.find(r => r.status === 200);
+  const working = Object.entries(debug).find(([, v]) => v !== 404 && v.status === 200);
   if (!working) {
     return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, debug }) };
   }
 
-  const campaigns = working.body?.results || working.body?.campaigns || working.body?.data || [];
-  const total_spent = campaigns.reduce((s, c) => s + (c.total_amount || c.spend || c.cost || 0), 0);
-
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent, available: total_spent > 0, campaigns_found: campaigns.length, debug }),
-  };
+  return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, working: working[0], data: working[1].body, debug }) };
 };
