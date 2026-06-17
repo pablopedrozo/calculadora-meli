@@ -26,49 +26,32 @@ exports.handler = async (event) => {
   const { token, user_id, from, to } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
-  try {
-    // Get advertiser_id
-    const adv = await apiGet(`/advertising/advertisers?user_id=${user_id}&product_id=PADS`, token);
-    if (adv.status !== 200) {
-      return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: adv.body }) };
-    }
-    const advertiser_id = adv.body?.advertisers?.[0]?.advertiser_id;
-    if (!advertiser_id) {
-      return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: "no advertiser_id" }) };
-    }
+  const ADV_ID = 703867; // confirmed advertiser_id for this account
 
-    // Try all report endpoint variants
-    const reportPaths = [
-      `/advertising/product_ads/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-      `/advertising/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}&product_id=PADS`,
-      `/advertising/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-      `/advertising/product_ads/advertisers/${advertiser_id}/report?date_from=${from}&date_to=${to}`,
-      `/advertising/advertisers/${advertiser_id}/reports?date_from=${from}&date_to=${to}&product_id=PADS&type=daily_performance`,
-      `/advertising/advertisers/${advertiser_id}/campaigns?date_from=${from}&date_to=${to}&product_id=PADS`,
-      `/advertising/advertisers/${advertiser_id}?product_id=PADS`,
-    ];
+  // Try all possible campaign/report paths for PADS
+  const paths = [
+    `/advertising/product_ads/campaigns?advertiser_id=${ADV_ID}&date_from=${from}&date_to=${to}`,
+    `/advertising/campaigns?advertiser_id=${ADV_ID}&product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/campaigns?advertiser_id=${ADV_ID}`,
+    `/advertising/campaigns?advertiser_id=${ADV_ID}&product_id=PADS`,
+    `/advertising/advertisers/${ADV_ID}/campaigns?product_id=PADS`,
+    `/advertising/advertisers/${ADV_ID}/metrics?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/advertisers/${ADV_ID}/summary?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/advertisers/${ADV_ID}/spending?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/advertisers/${ADV_ID}/reports/spending?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/advertisers/${ADV_ID}/reports/campaigns?product_id=PADS&date_from=${from}&date_to=${to}`,
+  ];
 
-    const reportDebug = {};
-    let total_spent = 0;
-    let found = false;
-
-    for (const path of reportPaths) {
-      const r = await apiGet(path, token);
-      reportDebug[path] = { status: r.status, body: r.body };
-      if (r.status === 200 && !found) {
-        const body = r.body;
-        const days = body?.daily_performance || body?.results || body?.data || [];
-        const spent = Array.isArray(days) ? days.reduce((s, d) => s + (d.total_amount || d.spend || d.cost || 0), 0) : 0;
-        if (spent > 0) { total_spent = spent; found = true; }
-      }
-    }
-
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ total_spent, available: found, advertiser_id, debug: reportDebug }),
-    };
-  } catch (e) {
-    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: e.message }) };
+  const debug = {};
+  for (const p of paths) {
+    const r = await apiGet(p, token);
+    if (r.status !== 404) debug[p] = { status: r.status, body: r.body };
+    else debug[p] = r.status;
   }
+
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ total_spent: 0, available: false, debug }),
+  };
 };
