@@ -19,6 +19,15 @@ function apiGet(path, token) {
   });
 }
 
+async function getShippingCost(shipmentId, token) {
+  try {
+    const data = await apiGet(`/shipments/${shipmentId}`, token);
+    return data.shipping_option?.cost || data.base_cost || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
 exports.handler = async (event) => {
   const { token, user_id, from, to, offset = "0" } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
@@ -26,27 +35,27 @@ exports.handler = async (event) => {
   try {
     const path = `/orders/search?seller=${user_id}&order.date_created.from=${from}T00:00:00.000-03:00&order.date_created.to=${to}T23:59:59.000-03:00&limit=50&offset=${offset}&sort=date_desc`;
     const data = await apiGet(path, token);
+    const orders = data.results || [];
 
-    // Enrich orders with fee details
-    const results = (data.results || []).map(order => {
-      // Get commission from fee_details or marketplace_fee
+    // Fetch shipping costs in parallel (max 10 at a time to avoid timeout)
+    const enriched = await Promise.all(orders.map(async (order) => {
+      // Commission: sum of sale_fee from items (most accurate)
       let commission = 0;
-      if (order.fee_details && order.fee_details.length > 0) {
-        commission = order.fee_details.reduce((sum, fee) => sum + Math.abs(fee.amount || 0), 0);
-      } else {
-        commission = Math.abs(order.marketplace_fee || 0);
+      const items = order.order_items || [];
+      if (items.length > 0) {
+        commission = items.reduce((s, i) => s + Math.abs(i.sale_fee || 0), 0);
       }
+      if (!commission) commission = Math.abs(order.marketplace_fee || 0);
 
       // Shipping cost
       let shippingCost = 0;
-      if (order.shipping && order.shipping.cost) {
-        shippingCost = order.shipping.cost;
+      const shipmentId = order.shipping?.id;
+      if (shipmentId) {
+        shippingCost = await getShippingCost(shipmentId, token);
       }
 
       // Payment info
-      const payment = order.payments && order.payments[0];
-      const paymentMethod = payment ? payment.payment_method_id : null;
-      const installments = payment ? (payment.installments || 1) : 1;
+      const payment = order.payments?.[0];
 
       return {
         id: order.id,
@@ -54,24 +63,24 @@ exports.handler = async (event) => {
         status: order.status,
         total_amount: order.total_amount || 0,
         commission,
-        shipping_id: order.shipping ? order.shipping.id : null,
         shipping_cost: shippingCost,
-        payment_method: paymentMethod,
-        installments,
-        items: (order.order_items || []).map(i => ({
-          title: i.item ? i.item.title : "—",
-          item_id: i.item ? i.item.id : null,
+        shipment_id: shipmentId || null,
+        payment_method: payment?.payment_method_id || null,
+        installments: payment?.installments || 1,
+        items: items.map(i => ({
+          title: i.item?.title || "—",
+          item_id: i.item?.id || null,
           quantity: i.quantity || 1,
           unit_price: i.unit_price || 0,
-          sale_fee: i.sale_fee || 0,
+          sale_fee: Math.abs(i.sale_fee || 0),
         })),
       };
-    });
+    }));
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ results, paging: data.paging }),
+      body: JSON.stringify({ results: enriched, paging: data.paging }),
     };
   } catch (e) {
     return { statusCode: 500, body: JSON.stringify({ error: e.message, results: [] }) };
