@@ -26,57 +26,34 @@ exports.handler = async (event) => {
   const { token, user_id, from, to } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
-  const debug = {};
-
-  // Try every known product_id variation
-  const productIds = [
-    "MP_ADS", "MPAds", "MPads", "mpads",
-    "SPONSORED", "sponsored",
-    "DISPLAY", "BRAND", "NATIVE", "SEARCH",
-    "ADS", "MLA", "PUBLICIDAD",
-    "product_ads", "PRODUCT_ADS",
-    "MELI_ADS", "meli_ads",
-    "PADS", "PAds",
-  ];
-
-  const results = {};
-  for (const pid of productIds) {
-    const r = await apiGet(`/advertising/advertisers?user_id=${user_id}&product_id=${pid}`, token);
-    // Only record non-400 "Invalid product id" responses to find the valid one
-    const isInvalid = r.status === 400 && JSON.stringify(r.body).includes("Invalid product id");
-    if (!isInvalid) {
-      results[pid] = { status: r.status, body: r.body };
+  try {
+    // Get advertiser_id using correct product_id=PADS
+    const adv = await apiGet(`/advertising/advertisers?user_id=${user_id}&product_id=PADS`, token);
+    if (adv.status !== 200) {
+      return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: adv.body }) };
     }
-  }
 
-  debug.valid_product_ids = results;
-  debug.all_tried = productIds;
+    const advertiser_id = adv.body?.advertisers?.[0]?.advertiser_id;
+    if (!advertiser_id) {
+      return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: "no advertiser_id" }) };
+    }
 
-  // Find working advertiser
-  const working = Object.entries(results).find(([, v]) => v.status === 200);
-  if (!working) {
+    // Try both report endpoints
+    const [rep1, rep2] = await Promise.all([
+      apiGet(`/advertising/product_ads/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}`, token),
+      apiGet(`/advertising/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}&product_id=PADS`, token),
+    ]);
+
+    const report = rep1.status === 200 ? rep1.body : rep2.status === 200 ? rep2.body : null;
+    const days = report?.daily_performance || [];
+    const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
+
     return {
       statusCode: 200,
-      body: JSON.stringify({ total_spent: 0, available: false, debug }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ total_spent, available: true, advertiser_id, days }),
     };
+  } catch (e) {
+    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, error: e.message }) };
   }
-
-  const [pid, data] = working;
-  const advId = data.body?.id || data.body?.advertiser_id ||
-    (Array.isArray(data.body) ? data.body[0]?.id : null) || user_id;
-
-  const rep = await apiGet(
-    `/advertising/product_ads/advertisers/${advId}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-    token
-  );
-  debug.report = { status: rep.status, body: rep.body };
-
-  const days = rep.body?.daily_performance || [];
-  const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
-
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent, available: total_spent > 0, product_id_used: pid, advertiser_id: advId, debug }),
-  };
 };
