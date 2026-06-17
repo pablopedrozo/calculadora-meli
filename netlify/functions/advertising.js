@@ -14,7 +14,7 @@ function apiGet(path, token) {
       res.on("data", (c) => (raw += c));
       res.on("end", () => {
         try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch (e) { reject(e); }
+        catch (e) { resolve({ status: res.statusCode, body: raw }); }
       });
     });
     req.on("error", reject);
@@ -26,61 +26,60 @@ exports.handler = async (event) => {
   const { token, user_id, from, to } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
-  const debug = {};
+  // Try every known MeLi advertising endpoint variant
+  const attempts = await Promise.all([
+    apiGet(`/advertising/product_ads/advertisers`, token),
+    apiGet(`/advertising/product_ads/advertisers?user_id=${user_id}`, token),
+    apiGet(`/advertising/product_ads/advertisers/${user_id}`, token),
+    apiGet(`/advertising/product_ads/advertisers/${user_id}/reports/daily_performance?date_from=${from}&date_to=${to}`, token),
+    apiGet(`/advertising/product_ads/advertisers?limit=10`, token),
+  ]);
 
-  try {
-    // Step 1: list advertisers for this user to get the real advertiser_id
-    const list = await apiGet(`/advertising/product_ads/advertisers?user_id=${user_id}`, token);
-    debug.list_status = list.status;
-    debug.list_body = list.body;
+  const debug = {
+    "GET /advertisers": { status: attempts[0].status, body: attempts[0].body },
+    "GET /advertisers?user_id": { status: attempts[1].status, body: attempts[1].body },
+    "GET /advertisers/{user_id}": { status: attempts[2].status, body: attempts[2].body },
+    "GET /advertisers/{user_id}/reports": { status: attempts[3].status, body: attempts[3].body },
+    "GET /advertisers?limit=10": { status: attempts[4].status, body: attempts[4].body },
+  };
 
-    let advertiser_id = null;
-    if (list.status === 200 && Array.isArray(list.body)) {
-      advertiser_id = list.body[0]?.id || list.body[0]?.advertiser_id || null;
-    } else if (list.status === 200 && list.body?.advertisers) {
-      advertiser_id = list.body.advertisers[0]?.id || null;
-    } else if (list.status === 200 && list.body?.id) {
-      advertiser_id = list.body.id;
-    }
+  // Try to find a working advertiser and report
+  let total_spent = 0;
+  let available = false;
 
-    debug.advertiser_id_found = advertiser_id;
+  // Check if list endpoint works
+  for (const attempt of [attempts[0], attempts[1], attempts[4]]) {
+    if (attempt.status === 200) {
+      const body = attempt.body;
+      let advId = null;
+      if (Array.isArray(body)) advId = body[0]?.id;
+      else if (body?.advertisers) advId = body.advertisers[0]?.id;
+      else if (body?.results) advId = body.results[0]?.id;
+      else if (body?.id) advId = body.id;
 
-    // If no advertiser found via list, try direct with user_id as fallback
-    if (!advertiser_id) {
-      // Try user_id directly as advertiser_id (some accounts match)
-      const direct = await apiGet(`/advertising/product_ads/advertisers/${user_id}`, token);
-      debug.direct_status = direct.status;
-      debug.direct_body = direct.body;
-      if (direct.status === 200 && !direct.body?.error) {
-        advertiser_id = direct.body?.id || user_id;
+      if (advId) {
+        const rep = await apiGet(`/advertising/product_ads/advertisers/${advId}/reports/daily_performance?date_from=${from}&date_to=${to}`, token);
+        debug.report_via_list = { advId, status: rep.status, body: rep.body };
+        if (rep.status === 200) {
+          const days = rep.body?.daily_performance || [];
+          total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
+          available = true;
+        }
+        break;
       }
     }
-
-    if (!advertiser_id) {
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ total_spent: 0, available: false, reason: "no_advertiser", debug }),
-      };
-    }
-
-    // Step 2: daily performance report using real advertiser_id
-    const rep = await apiGet(
-      `/advertising/product_ads/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-      token
-    );
-    debug.report_status = rep.status;
-    debug.report_body = rep.body;
-
-    const days = rep.body?.daily_performance || [];
-    const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
-
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ total_spent, available: total_spent > 0, days, debug }),
-    };
-  } catch (e) {
-    debug.exception = e.message;
-    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, debug }) };
   }
+
+  // Check direct report (attempt[3])
+  if (!available && attempts[3].status === 200) {
+    const days = attempts[3].body?.daily_performance || [];
+    total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
+    available = true;
+  }
+
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ total_spent, available, debug }),
+  };
 };
