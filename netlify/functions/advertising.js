@@ -26,51 +26,71 @@ exports.handler = async (event) => {
   const { token, user_id, from, to } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
-  // Try every possible MeLi advertising endpoint for Argentina
-  const paths = [
-    `/advertising/product_ads/advertisers/${user_id}`,
-    `/advertising/product_ads/advertisers`,
-    `/advertising/product_ads/advertisers?user_id=${user_id}&site_id=MLA`,
-    `/sites/MLA/advertising/product_ads/advertisers/${user_id}`,
-    `/sites/MLA/advertising/advertisers/${user_id}`,
-    `/advertising/advertisers/${user_id}`,
-    `/advertising/advertisers?user_id=${user_id}`,
-    `/advertising/${user_id}`,
-    `/users/${user_id}/advertising`,
-    `/users/${user_id}/advertising/campaigns`,
-  ];
+  const debug = {};
 
-  const results = {};
-  for (const p of paths) {
-    const r = await apiGet(p, token);
-    results[p] = { status: r.status, body: r.status !== 404 ? r.body : "404" };
-  }
+  try {
+    // Step 1: get available advertising products
+    const products = await apiGet(`/advertising/products`, token);
+    debug.products = { status: products.status, body: products.body };
 
-  // Find first working endpoint
-  const working = Object.entries(results).find(([, v]) => v.status === 200);
+    // Common product IDs to try for Argentina
+    const productIds = ["PRODUCT_ADS", "product_ads", "1", "2", "3"];
 
-  if (!working) {
+    // If products endpoint worked, extract real IDs
+    if (products.status === 200) {
+      const list = products.body;
+      if (Array.isArray(list)) list.forEach(p => { if (p.id) productIds.unshift(String(p.id)); });
+      else if (list?.results) list.results.forEach(p => { if (p.id) productIds.unshift(String(p.id)); });
+    }
+
+    // Step 2: try each product_id
+    let advertiser_id = null;
+    for (const pid of [...new Set(productIds)]) {
+      const r = await apiGet(`/advertising/advertisers?user_id=${user_id}&product_id=${pid}`, token);
+      debug[`advertisers_product_${pid}`] = { status: r.status, body: r.body };
+      if (r.status === 200) {
+        const body = r.body;
+        advertiser_id = body?.id || body?.advertiser_id ||
+          (Array.isArray(body) ? body[0]?.id : null) ||
+          body?.results?.[0]?.id;
+        if (advertiser_id) { debug.found_with_product_id = pid; break; }
+      }
+    }
+
+    if (!advertiser_id) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ total_spent: 0, available: false, debug }),
+      };
+    }
+
+    // Step 3: get spending report
+    const rep = await apiGet(
+      `/advertising/product_ads/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}`,
+      token
+    );
+    debug.report = { status: rep.status, body: rep.body };
+
+    // Also try generic report endpoint
+    if (rep.status !== 200) {
+      const rep2 = await apiGet(
+        `/advertising/advertisers/${advertiser_id}/reports/daily_performance?date_from=${from}&date_to=${to}`,
+        token
+      );
+      debug.report2 = { status: rep2.status, body: rep2.body };
+    }
+
+    const reportBody = rep.status === 200 ? rep.body : null;
+    const days = reportBody?.daily_performance || [];
+    const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
+
     return {
       statusCode: 200,
-      body: JSON.stringify({ total_spent: 0, available: false, debug: results }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ total_spent, available: total_spent > 0, advertiser_id, debug }),
     };
+  } catch (e) {
+    debug.exception = e.message;
+    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, debug }) };
   }
-
-  // Try to get spending from working endpoint
-  const [workingPath, workingData] = working;
-  const advId = workingData.body?.id || workingData.body?.advertiser_id || user_id;
-
-  const rep = await apiGet(
-    `/advertising/product_ads/advertisers/${advId}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-    token
-  );
-
-  const days = rep.body?.daily_performance || [];
-  const total_spent = days.reduce((s, d) => s + (d.total_amount || 0), 0);
-
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent, available: total_spent > 0, working_endpoint: workingPath, debug: results }),
-  };
 };
