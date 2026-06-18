@@ -1,17 +1,18 @@
 const https = require("https");
 
-function apiRequest(path, token, method = "GET", body = null) {
+function apiRequest(hostname, path, token, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
-    const urlObj = new URL(`https://api.mercadolibre.com${path}`);
-    const postBody = body ? JSON.stringify(body) : null;
+    const urlObj = new URL(`https://${hostname}${path}`);
     const options = {
       hostname: urlObj.hostname,
       path: urlObj.pathname + urlObj.search,
-      method,
+      method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
-        ...(postBody ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(postBody) } : {}),
+        "X-Caller-Id": "1877728575",
+        "X-Format-New": "true",
+        ...extraHeaders,
       },
     };
     const req = https.request(options, (res) => {
@@ -19,11 +20,10 @@ function apiRequest(path, token, method = "GET", body = null) {
       res.on("data", (c) => (raw += c));
       res.on("end", () => {
         try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch (e) { resolve({ status: res.statusCode, body: raw }); }
+        catch (e) { resolve({ status: res.statusCode, body: raw.slice(0, 500) }); }
       });
     });
     req.on("error", reject);
-    if (postBody) req.write(postBody);
     req.end();
   });
 }
@@ -33,46 +33,36 @@ exports.handler = async (event) => {
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
   const ADV_ID = 703867;
-  const ACC_ID = 741721;
+  const ML = "api.mercadolibre.com";
+  const PA = "pa.mercadolibre.com.ar";
+
   const debug = {};
 
-  // POST to campaigns/search with various body structures
-  const bodies = [
-    { advertiserId: ADV_ID, dateFrom: from, dateTo: to, limit: 100 },
-    { accountId: ACC_ID, dateFrom: from, dateTo: to, limit: 100 },
-    { advertiserId: ADV_ID, accountId: ACC_ID, dateFrom: from, dateTo: to, limit: 100 },
-    { userId: Number(user_id), dateFrom: from, dateTo: to, limit: 100 },
-    { advertiserId: ADV_ID, dateFrom: from, dateTo: to },
-    { filters: { advertiserId: ADV_ID }, dateFrom: from, dateTo: to },
+  const paths = [
+    [PA, `/pa/api/admin-pads/ajax/campaigns/metrics?dateFrom=${from}&dateTo=${to}&advertiserId=${ADV_ID}`, { "X-Caller-Id": user_id, "X-Advertiser-Id": String(ADV_ID) }],
+    [PA, `/pa/api/admin-pads/ajax/summary?dateFrom=${from}&dateTo=${to}&advertiserId=${ADV_ID}`, { "X-Caller-Id": user_id }],
+    [ML, `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&status=A,D&dateFrom=${from}&dateTo=${to}&limit=50`, { "X-Caller-Id": user_id }],
+    [ML, `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&status=ACTIVE&dateFrom=${from}&dateTo=${to}`, { "X-Caller-Id": user_id }],
+    [ML, `/advertising/product_ads/advertisers/${ADV_ID}/campaigns?dateFrom=${from}&dateTo=${to}`, { "X-Caller-Id": user_id }],
   ];
 
-  let campaignIds = [];
-  for (const body of bodies) {
-    const r = await apiRequest(`/advertising/product_ads/campaigns/search`, token, "POST", body);
-    debug[`POST search ${JSON.stringify(body)}`] = { status: r.status, body: r.status !== 404 ? r.body : 404 };
-    if (r.status === 200) {
-      const results = r.body?.results || r.body?.campaigns || (Array.isArray(r.body) ? r.body : []);
-      campaignIds = results.map(c => c.id || c.campaign_id || c.campaignId).filter(Boolean);
-      if (campaignIds.length > 0) {
-        debug.found_campaigns = campaignIds;
-        break;
-      }
-    }
+  for (const [host, path, headers] of paths) {
+    const r = await apiRequest(host, path, token, headers || {});
+    debug[`${host}${path}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
   }
 
-  if (campaignIds.length > 0) {
-    const ids = campaignIds.join(",");
-    const r = await apiRequest(`/advertising/product_ads/campaigns/metrics?campaignIds=${ids}&dateFrom=${from}&dateTo=${to}`, token);
-    debug.metrics = { status: r.status, body: r.body };
-    if (r.status === 200) {
-      const items = r.body?.results || r.body?.data || r.body?.campaigns || (Array.isArray(r.body) ? r.body : []);
-      const total_spent = items.reduce((s, d) => s + (d.total_amount || d.totalSpend || d.spend || d.cost || 0), 0);
-      return {
-        statusCode: 200,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ total_spent, available: true, debug }),
-      };
-    }
+  const working = Object.entries(debug).find(([, v]) => v !== 404 && v.status === 200);
+  if (working) {
+    const body = working[1].body;
+    const items = body?.results || body?.data || body?.campaigns || body?.daily_performance || (Array.isArray(body) ? body : []);
+    const total_spent = Array.isArray(items)
+      ? items.reduce((s, d) => s + (d.total_amount || d.totalSpend || d.spend || d.cost || 0), 0)
+      : (body?.totalSpend || body?.total_spend || body?.spend || 0);
+    return {
+      statusCode: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ total_spent, available: total_spent > 0, endpoint: working[0], debug }),
+    };
   }
 
   return {

@@ -221,8 +221,9 @@ function fmtPct(n){
   if(isNaN(n)||!isFinite(n)) return "—";
   return (n*100).toFixed(1)+"%";
 }
-function today(){return new Date().toISOString().split("T")[0];}
-function daysAgo(n){const d=new Date();d.setDate(d.getDate()-n);return d.toISOString().split("T")[0];}
+function arDate(d){const t=(d||new Date()).getTime()-3*60*60*1000;return new Date(t).toISOString().split("T")[0];}
+function today(){return arDate();}
+function daysAgo(n){const d=new Date();d.setDate(d.getDate()-n);return arDate(d);}
 function yesterday(){return daysAgo(1);}
 function firstOfMonth(){const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];}
 
