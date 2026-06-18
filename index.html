@@ -177,6 +177,8 @@ const S = {
   publiCampaigns: [],
   publiAcos: 0,
   publiVentasAds: 0,
+  allItems: [],
+  itemsLoading: false,
   orders: [],
   total: 0,
   offset: 0,
@@ -315,6 +317,18 @@ async function loadAdvertising(){
   }catch(e){S.publiFromAPI=false;}
 }
 
+// Trae TODAS las publicaciones del vendedor (para poder cargar costos aunque no se hayan vendido)
+async function loadAllItems(){
+  if(!S.token) return;
+  S.itemsLoading=true; if(S.page==="products") renderContent();
+  try{
+    const data = await apiFn("items",{token:S.token,user_id:S.userId});
+    S.allItems = data.items||[];
+  }catch(e){ S.allItems=[]; }
+  S.itemsLoading=false;
+  if(S.page==="products") renderContent();
+}
+
 // Load ALL orders for the period (auto-paginate up to 500)
 async function loadAllOrders(){
   S.loading=true; S.error=null; S.orders=[]; S.total=0;
@@ -396,6 +410,35 @@ function getByProduct(calcs){
     });
   });
   return Object.values(map).sort((a,b)=>b.ganancia-a.ganancia);
+}
+
+// Combina TODAS las publicaciones del catálogo con los datos de ventas del período.
+// Productos no vendidos aparecen con qty/ventas/ganancia en 0 pero igual permiten cargar costo.
+function getProductsForCosts(){
+  const stats=S.orders.length?getStats():null;
+  const sold={};
+  if(stats) getByProduct(stats.calcs).forEach(p=>{ sold[p.item_id||("t_"+p.title)]=p; });
+  const rows=[]; const seen=new Set();
+  S.allItems.forEach(it=>{
+    const s=sold[it.id];
+    rows.push({item_id:it.id,title:it.title,status:it.status,price:it.price,stock:it.available_quantity,
+      qty:s?s.qty:0,ventas:s?s.ventas:0,ganancia:s?s.ganancia:0,costoProducto:s?s.costoProducto:0});
+    seen.add(it.id);
+  });
+  // Productos vendidos en el período cuya publicación no está en el catálogo vivo (ej. pausada/cerrada)
+  Object.values(sold).forEach(p=>{
+    const key=p.item_id||("t_"+p.title);
+    if(!seen.has(p.item_id)&&!seen.has(key)){
+      rows.push({item_id:p.item_id||null,title:p.title,status:"sold",price:0,stock:0,
+        qty:p.qty,ventas:p.ventas,ganancia:p.ganancia,costoProducto:p.costoProducto});
+    }
+  });
+  // Vendidos primero (por ganancia), después el resto por título
+  return rows.sort((a,b)=>{
+    if((a.qty>0)!==(b.qty>0)) return a.qty>0?-1:1;
+    if(a.qty>0&&b.qty>0) return b.ganancia-a.ganancia;
+    return a.title.localeCompare(b.title);
+  });
 }
 
 function getByDay(calcs){
@@ -517,6 +560,8 @@ function setPage(p){
   S.page=p;
   document.querySelectorAll(".nav-item").forEach(el=>el.classList.toggle("active",el.dataset.page===p));
   renderContent();
+  // Al entrar a Productos, cargar todas las publicaciones si aún no se cargaron
+  if(p==="products" && S.token && !S.allItems.length && !S.itemsLoading) loadAllItems();
 }
 
 function renderContent(){
@@ -644,34 +689,48 @@ function renderOrders(el){
     </div>`}`;
 }
 
+function statusBadge(st){
+  if(st==="active") return `<span class="tag paid">Activa</span>`;
+  if(st==="paused") return `<span class="tag pending">Pausada</span>`;
+  if(st==="sold") return `<span class="tag" style="background:var(--purple-bg);color:var(--purple-text)">Vendida</span>`;
+  return `<span class="tag">${st||"—"}</span>`;
+}
+
 function renderProducts(el){
-  if(S.loading){el.innerHTML=`<div class="loading-wrap"><div class="spinner"></div>Cargando...</div>`;return;}
-  const stats=S.orders.length?getStats():null;
-  const byProduct=stats?getByProduct(stats.calcs):[];
+  if(S.itemsLoading){el.innerHTML=`<div class="loading-wrap"><div class="spinner"></div>Cargando todas las publicaciones...</div>`;return;}
+  const products=getProductsForCosts();
+  const conCosto=products.filter(p=>{const c=S.productCosts[p.item_id]??S.productCosts["t_"+p.title];return c!==undefined&&c>0;}).length;
+  const vendidos=products.filter(p=>p.qty>0).length;
 
   el.innerHTML=`
-    <div class="page-header"><div><div class="page-title">Productos y Costos</div><div class="page-sub">Ingresá el costo de cada producto para ver la ganancia real</div></div></div>
+    <div class="page-header"><div><div class="page-title">Productos y Costos</div><div class="page-sub">Cargá el costo de compra de cada publicación · se guarda automático</div></div></div>
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
-    ${!byProduct.length?`<div class="empty">Cargá las ventas para ver los productos.</div>`:`
-    <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-      <span>Ingresá el costo unitario de compra de cada producto.</span>
+    ${!products.length?`<div class="empty">No se pudieron cargar las publicaciones.<br><button class="btn-primary" style="margin-top:12px" onclick="loadAllItems()">Reintentar</button></div>`:`
+    <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <span>📦 <b>${products.length}</b> publicaciones · <b>${conCosto}</b> con costo cargado · <b>${vendidos}</b> con ventas en el período</span>
       <button class="btn-primary" style="white-space:nowrap;padding:6px 16px;font-size:13px" onclick="saveAllCosts()">Guardar cambios</button>
     </div>
     <div class="table-wrap">
-      <div class="table-header"><span class="table-title">▸ ${byProduct.length} productos distintos</span></div>
+      <div class="table-header" style="display:flex;align-items:center;gap:10px">
+        <span class="table-title">▸ Catálogo completo</span>
+        <input id="prod-filter" placeholder="🔍 Buscar producto..." oninput="filterProducts()"
+          style="margin-left:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;width:220px;outline:none">
+      </div>
       <table>
         <thead><tr>
-          <th>#</th><th>Producto</th><th class="r">Unidades</th><th class="r">Costo unitario</th><th class="r">Ventas brutas</th><th class="r">Costo total prod.</th><th class="r">Ganancia</th><th class="r">Margen</th>
+          <th>#</th><th>Producto</th><th>Estado</th><th class="r">Stock</th><th class="r">Vendidas</th><th class="r">Costo unitario</th><th class="r">Ventas</th><th class="r">Ganancia</th><th class="r">Margen</th>
         </tr></thead>
-        <tbody>
-          ${byProduct.map((p,i)=>{
+        <tbody id="prod-tbody">
+          ${products.map((p,i)=>{
             const savedCost=S.productCosts[p.item_id]??S.productCosts["t_"+p.title]??"";
             const margen=p.ventas>0?p.ganancia/p.ventas:0;
-            return`<tr>
+            return`<tr data-title="${(p.title||"").replace(/"/g,"&quot;")}">
               <td class="neutral">${i+1}</td>
-              <td class="text" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.title}">${p.title}</td>
-              <td class="r">${p.qty}</td>
+              <td class="text" style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.title}">${p.title}</td>
+              <td>${statusBadge(p.status)}</td>
+              <td class="r neutral">${p.stock||0}</td>
+              <td class="r ${p.qty>0?"":"neutral"}">${p.qty||"—"}</td>
               <td class="r">
                 <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
                   <span style="font-size:11px;color:var(--text3)">$</span>
@@ -681,15 +740,21 @@ function renderProducts(el){
                   <span class="cost-saved" id="saved-${i}">✓</span>
                 </div>
               </td>
-              <td class="r">${fmt(p.ventas)}</td>
-              <td class="r ${p.costoProducto>0?"neg":"neutral"}">${p.costoProducto>0?fmt(-p.costoProducto):"—"}</td>
-              <td class="r ${p.ganancia>=0?"pos":"neg"}">${fmt(p.ganancia)}</td>
-              <td class="r ${margen>=0?"pos":"neg"}">${fmtPct(margen)}</td>
+              <td class="r ${p.qty>0?"":"neutral"}">${p.qty>0?fmt(p.ventas):"—"}</td>
+              <td class="r ${p.qty>0?(p.ganancia>=0?"pos":"neg"):"neutral"}">${p.qty>0?fmt(p.ganancia):"—"}</td>
+              <td class="r ${p.qty>0?(margen>=0?"pos":"neg"):"neutral"}">${p.qty>0?fmtPct(margen):"—"}</td>
             </tr>`;
           }).join("")}
         </tbody>
       </table>
     </div>`}`;
+}
+
+function filterProducts(){
+  const q=(document.getElementById("prod-filter")?.value||"").toLowerCase();
+  document.querySelectorAll("#prod-tbody tr").forEach(tr=>{
+    tr.style.display=(tr.dataset.title||"").toLowerCase().includes(q)?"":"none";
+  });
 }
 
 function saveAllCosts(){
