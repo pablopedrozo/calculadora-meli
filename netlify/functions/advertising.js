@@ -1,84 +1,65 @@
 const https = require("https");
 
-function apiGet(path, token, apiVersion) {
+function apiGet(path, token) {
   return new Promise((resolve) => {
-    const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
-    if (apiVersion) headers["Api-Version"] = String(apiVersion);
-    const options = { hostname: "api.mercadolibre.com", path, method: "GET", headers };
+    const options = {
+      hostname: "api.mercadolibre.com",
+      path,
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Api-Version": "1" },
+    };
     const req = https.request(options, (res) => {
       let raw = "";
       res.on("data", (c) => (raw += c));
-      res.on("end", () => {
-        let body; try { body = JSON.parse(raw); } catch (e) { body = raw.slice(0, 400); }
-        resolve({ status: res.statusCode, body });
-      });
+      res.on("end", () => { let b; try { b = JSON.parse(raw); } catch (e) { b = null; } resolve({ status: res.statusCode, body: b }); });
     });
-    req.on("error", (e) => resolve({ status: 0, body: { error: e.message } }));
+    req.on("error", () => resolve({ status: 0, body: null }));
     req.end();
   });
-}
-
-// Suma el gasto (cost) de un array de campañas, probando nombres de campo conocidos
-function sumSpend(items) {
-  if (!Array.isArray(items)) return 0;
-  return items.reduce((s, c) => {
-    const m = c.metrics || c;
-    const cost = m.cost ?? m.total_amount ?? m.spend ?? m.amount ?? m.investment ?? 0;
-    return s + (Number(cost) || 0);
-  }, 0);
 }
 
 exports.handler = async (event) => {
   const { token, user_id, from, to, site = "MLA" } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
-  const debug = {};
+  const json = (obj) => ({ statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
 
-  // 1. Advertiser ID (endpoint conocido que funciona)
+  // 1. Advertiser ID de Product Ads (PADS)
   let advertiser_id = null;
-  const adv = await apiGet(`/advertising/advertisers?product_id=PADS`, token, 1);
-  debug.advertisers = { status: adv.status, body: adv.body };
+  const adv = await apiGet(`/advertising/advertisers?product_id=PADS`, token);
   if (adv.status === 200) {
-    const list = adv.body?.advertisers || adv.body?.results || (Array.isArray(adv.body) ? adv.body : []);
+    const list = adv.body?.advertisers || adv.body?.results || [];
     advertiser_id = list[0]?.advertiser_id || list[0]?.id || null;
   }
-  if (!advertiser_id) advertiser_id = 703867; // fallback conocido de la cuenta
+  if (!advertiser_id) return json({ total_spent: 0, available: false, error: "no_advertiser", adv_status: adv.status });
 
-  // 2. Endpoints nuevos (marketplace) — los viejos se deprecaron feb 2026
-  const metricFields = "clicks,prints,cost,cpc,acos,total_amount";
-  const candidates = [
-    `/advertising/${site}/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}&metrics_summary=true`,
-    `/marketplace/advertising/${site}/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}&metrics_summary=true`,
-    `/advertising/product_ads/${site}/advertisers/${advertiser_id}/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}`,
-    `/advertising/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}`,
-  ];
+  // 2. Campañas + métricas reales del período (gasto en metrics_summary.cost)
+  // Endpoint nuevo marketplace — los viejos se deprecaron feb 2026
+  const metricFields = "clicks,prints,cost,cpc,acos,total_amount,direct_amount,indirect_amount";
+  const path = `/advertising/${site}/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}&metrics_summary=true`;
+  const r = await apiGet(path, token);
 
-  let total_spent = 0;
-  let endpoint = null;
-
-  for (const path of candidates) {
-    // probar con Api-Version 1 y 2
-    for (const ver of [1, 2]) {
-      const r = await apiGet(path, token, ver);
-      const key = `v${ver} ${path.split("?")[0]}`;
-      debug[key] = { status: r.status, body_preview: typeof r.body === "object" ? JSON.stringify(r.body).slice(0, 250) : r.body };
-      if (r.status === 200 && r.body) {
-        // El resumen de métricas puede venir en metrics_summary o sumando results
-        const summary = r.body.metrics_summary || r.body.metrics || null;
-        const fromSummary = summary ? (summary.cost ?? summary.total_amount ?? 0) : 0;
-        const fromList = sumSpend(r.body.results || r.body.campaigns || []);
-        const spend = Number(fromSummary) || fromList;
-        if (spend > 0) { total_spent = spend; endpoint = key; break; }
-        // status 200 pero sin gasto: igual lo damos por válido (puede ser 0 real)
-        if (!endpoint) { endpoint = key; }
-      }
-    }
-    if (total_spent > 0) break;
+  if (r.status !== 200 || !r.body) {
+    return json({ total_spent: 0, available: false, advertiser_id, status: r.status });
   }
 
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent, available: total_spent > 0, advertiser_id, endpoint, debug }),
-  };
+  const summary = r.body.metrics_summary || {};
+  const total_spent = Number(summary.cost) || 0;       // gasto real en publicidad
+  const ventas_ads = Number(summary.total_amount) || 0; // ventas atribuidas (directas + indirectas)
+  const acos = Number(summary.acos) || 0;               // % gasto/ventas atribuidas
+
+  // Desglose de campañas con gasto en el período
+  const campaigns = (r.body.results || [])
+    .filter((c) => (c.metrics?.cost || 0) > 0)
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      status: c.status,
+      cost: c.metrics.cost,
+      ventas: c.metrics.total_amount || 0,
+      acos: c.metrics.acos || 0,
+    }))
+    .sort((a, b) => b.cost - a.cost);
+
+  return json({ total_spent, ventas_ads, acos, available: total_spent > 0, advertiser_id, campaigns });
 };

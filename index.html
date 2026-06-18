@@ -174,6 +174,9 @@ const S = {
   publiManual: parseFloat(localStorage.getItem("publiManual")||"0"),
   publiARS: 0,
   publiFromAPI: false,
+  publiCampaigns: [],
+  publiAcos: 0,
+  publiVentasAds: 0,
   orders: [],
   total: 0,
   offset: 0,
@@ -296,41 +299,19 @@ function doLogout(){
   render();
 }
 
-async function fetchAdSpendClientSide(advertiserId, from, to){
-  // The pa.mercadolibre.com.ar BFF uses browser session cookies — call it directly from
-  // the browser so the user's existing MeLi login is used automatically.
-  const urls = [
-    `https://pa.mercadolibre.com.ar/pa/api/admin-pads/ajax/campaigns/metrics?dateFrom=${from}&dateTo=${to}&advertiserId=${advertiserId}`,
-    `https://pa.mercadolibre.com.ar/pa/api/admin-pads/ajax/summary?dateFrom=${from}&dateTo=${to}&advertiserId=${advertiserId}`,
-    `https://www.mercadolibre.com.ar/publicidad/api/metrics?dateFrom=${from}&dateTo=${to}&advertiserId=${advertiserId}`,
-  ];
-  for(const url of urls){
-    try{
-      const r = await fetch(url,{credentials:"include",headers:{Accept:"application/json"}});
-      if(!r.ok) continue;
-      const d = await r.json();
-      const spent = d?.totalSpend||d?.total_amount||d?.total_spent||d?.spend||
-        (Array.isArray(d?.campaigns)?d.campaigns.reduce((s,c)=>s+(c.totalSpend||c.spend||0),0):0)||
-        (Array.isArray(d?.data)?d.data.reduce((s,c)=>s+(c.totalSpend||c.spend||0),0):0);
-      if(spent>0){console.log("Publicidad desde BFF:",url,spent);return spent;}
-    }catch(e){/* CORS bloqueado o error de red */}
-  }
-  return 0;
-}
-
 async function loadAdvertising(){
   try{
     const data = await apiFn("advertising",{token:S.token,user_id:S.userId,from:S.dateFrom,to:S.dateTo});
     if(data.available&&data.total_spent>0){
-      S.publiARS=data.total_spent;S.publiFromAPI=true;
-      return;
+      S.publiARS=data.total_spent;
+      S.publiFromAPI=true;
+      S.publiCampaigns=data.campaigns||[];
+      S.publiAcos=data.acos||0;
+      S.publiVentasAds=data.ventas_ads||0;
+    }else{
+      S.publiFromAPI=false;
+      S.publiCampaigns=[];
     }
-    // Si la API de Netlify no devolvió datos, intentar directamente desde el browser
-    // usando las cookies de sesión de MeLi del usuario
-    const advertiserId = data.advertiser_id||703867;
-    const clientSpend = await fetchAdSpendClientSide(advertiserId, S.dateFrom, S.dateTo);
-    if(clientSpend>0){S.publiARS=clientSpend;S.publiFromAPI=true;}
-    else S.publiFromAPI=false;
   }catch(e){S.publiFromAPI=false;}
 }
 
@@ -569,16 +550,27 @@ function renderDashboard(el){
       <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">IIBB${stats.totalPercepciones>0?" + Percep.":""}</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(stats.totalIIBB+stats.totalPercepciones)}</div><div class="metric-sub">${stats.totalIIBB>0?"real por venta":""}${stats.totalPercepciones>0?" + "+S.percepcionesPct+"% manual":""}</div></div>
       <div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">Costo productos</div><div class="metric-value" style="color:var(--purple-text)">${fmt(stats.totalCostoProducto)}</div><div class="metric-sub">${stats.totalCostoProducto===0?"Cargá costos en Productos":""}</div></div>
       <div class="metric" style="border-top-color:var(--purple)">
-        <div class="metric-label">Publicidad</div>
-        <div class="metric-value" style="color:var(--purple-text)">
-          <input id="publi-input" type="number" value="${S.publiManual||0}" step="100"
-            style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0"
-            onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()"
-            title="Ingresá el gasto en publicidad del período">
-        </div>
-        <div class="metric-sub">$ — editá directo acá</div>
+        <div class="metric-label">Publicidad ${S.publiFromAPI?'<span style="color:var(--green-text);font-size:10px">● auto MeLi</span>':""}</div>
+        ${S.publiFromAPI
+          ?`<div class="metric-value" style="color:var(--purple-text)">${fmt(S.publiARS)}</div>
+            <div class="metric-sub">ACOS ${S.publiAcos.toFixed(1)}% · ${S.publiCampaigns.length} camp. activas</div>`
+          :`<div class="metric-value" style="color:var(--purple-text)">
+              <input id="publi-input" type="number" value="${S.publiManual||0}" step="100"
+                style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0"
+                onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()"
+                title="Ingresá el gasto en publicidad del período">
+            </div>
+            <div class="metric-sub">$ — no se pudo auto-cargar, editá acá</div>`}
       </div>
     </div>
+    ${S.publiFromAPI&&S.publiCampaigns.length?`<div class="card">
+      <div class="card-title">Gasto en publicidad por campaña · ${fmt(S.publiARS)} total</div>
+      ${S.publiCampaigns.map(c=>`
+        <div class="rank-item">
+          <div class="rank-info"><div class="rank-name">${c.name}</div><div class="rank-units">ACOS ${c.acos.toFixed(1)}% · ventas atribuidas ${fmt(c.ventas)}</div></div>
+          <div class="rank-value neg">${fmt(-c.cost)}</div>
+        </div>`).join("")}
+    </div>`:""}
     <div class="charts-grid">
       <div class="card"><div class="card-title">Ventas vs Ganancia por día</div><div class="chart-wrap"><canvas id="chartVentas"></canvas></div></div>
       <div class="card"><div class="card-title">Ganancia por producto</div><div class="chart-wrap"><canvas id="chartProducts"></canvas></div></div>
@@ -606,14 +598,15 @@ function renderOrders(el){
     <div class="page-header"><div><div class="page-title">Órdenes</div><div class="page-sub">Detalle completo con costos reales · ${S.orders.length} ventas cargadas</div></div></div>
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
-    <div class="card" style="margin:12px 0;padding:12px;border:1px dashed var(--orange)">
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <button class="btn" style="background:var(--orange);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600" onclick="runDiag()">🔧 Diagnóstico API</button>
+    <details class="card" style="margin:12px 0;padding:10px 12px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text3);font-weight:600">🔧 Diagnóstico API (avanzado)</summary>
+      <div style="display:flex;gap:8px;align-items:center;margin:10px 0 8px">
+        <button class="btn" style="background:var(--orange);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600" onclick="runDiag()">Ejecutar</button>
         <button class="btn-ghost" onclick="copyDiag()">📋 Copiar resultado</button>
-        <span style="font-size:11px;color:var(--text3)">Trae el JSON crudo de una orden real para corregir comisión/envío/IIBB</span>
+        <span style="font-size:11px;color:var(--text3)">Trae el JSON crudo de MeLi/MercadoPago para depurar</span>
       </div>
-      <textarea id="diag-output" readonly placeholder="Apretá 'Diagnóstico API' y después 'Copiar resultado', y pegámelo en el chat" style="width:100%;height:140px;font-family:monospace;font-size:10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical"></textarea>
-    </div>
+      <textarea id="diag-output" readonly placeholder="Apretá 'Ejecutar' y después 'Copiar resultado'" style="width:100%;height:140px;font-family:monospace;font-size:10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical"></textarea>
+    </details>
     ${!stats?`<div class="empty">Seleccioná un período y cargá las ventas.</div>`:`
     <div class="table-wrap">
       <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span></div>
