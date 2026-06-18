@@ -357,21 +357,40 @@ async function loadAllItems(){
   if(S.page==="products") renderContent();
 }
 
-// Load ALL orders for the period (auto-paginate up to 500)
+// Trae una página de órdenes con reintento (no rompe toda la carga si una falla)
+async function fetchOrdersPage(offset,tries=2){
+  for(let t=0;t<tries;t++){
+    try{
+      return await apiFn("orders",{token:S.token,user_id:S.userId,from:S.dateFrom,to:S.dateTo,offset});
+    }catch(e){ if(t===tries-1) return null; }
+  }
+  return null;
+}
+
+// Carga TODAS las órdenes del período: en paralelo (por lotes), con progreso y tolerante a fallos
 async function loadAllOrders(){
   await ensureToken();
   S.loading=true; S.error=null; S.orders=[]; S.total=0;
   renderContent();
   try{
     await loadAdvertising();
-    let offset=0; let allOrders=[];
-    while(true){
-      const data = await apiFn("orders",{token:S.token,user_id:S.userId,from:S.dateFrom,to:S.dateTo,offset});
-      const results = data.results||[];
-      allOrders = [...allOrders,...results];
-      S.total = data.paging?.total||results.length;
-      if(results.length<50||allOrders.length>=500) break;
-      offset+=50;
+    // Primera página: nos dice el total
+    const first = await fetchOrdersPage(0);
+    if(!first) throw new Error("No se pudo conectar con MeLi");
+    let allOrders = first.results||[];
+    S.total = first.paging?.total || allOrders.length;
+    S.orders = allOrders; renderContent();
+
+    // Resto de páginas (tope 1500) en lotes paralelos de 4
+    const cap = Math.min(S.total, 1500);
+    const offsets=[];
+    for(let o=50;o<cap;o+=50) offsets.push(o);
+    const CHUNK=4;
+    for(let i=0;i<offsets.length;i+=CHUNK){
+      const batch = offsets.slice(i,i+CHUNK);
+      const pages = await Promise.all(batch.map(o=>fetchOrdersPage(o)));
+      pages.forEach(p=>{ if(p&&p.results) allOrders=allOrders.concat(p.results); });
+      S.orders=allOrders; renderContent(); // muestra progreso parcial
     }
     S.orders=allOrders;
     S.debugOrder = allOrders[0]?.debug || null;
@@ -613,8 +632,13 @@ function renderContent(){
   else if(S.page==="products") renderProducts(el);
 }
 
+function loadingMsg(base){
+  const p = S.total ? ` · ${S.orders.length} de ${S.total}` : (S.orders.length?` · ${S.orders.length}`:"");
+  return `<div class="loading-wrap"><div class="spinner"></div>${base}${p}</div>`;
+}
+
 function renderDashboard(el){
-  if(S.loading){el.innerHTML=`<div class="loading-wrap"><div class="spinner"></div>Cargando ventas...</div>`;return;}
+  if(S.loading){el.innerHTML=loadingMsg("Cargando ventas...");return;}
   const stats=S.orders.length?getStats():null;
   const byProduct=stats?getByProduct(stats.calcs):[];
   const maxG=byProduct.length?Math.max(...byProduct.map(p=>p.ganancia),1):1;
@@ -686,7 +710,7 @@ function renderDashboard(el){
 }
 
 function renderOrders(el){
-  if(S.loading){el.innerHTML=`<div class="loading-wrap"><div class="spinner"></div>Cargando órdenes...</div>`;return;}
+  if(S.loading){el.innerHTML=loadingMsg("Cargando órdenes...");return;}
   const stats=S.orders.length?getStats():null;
   const page=Math.floor(S.offset/PAGE_SIZE);
   const pageOrders=stats?stats.calcs.slice(S.offset,S.offset+PAGE_SIZE):[];
