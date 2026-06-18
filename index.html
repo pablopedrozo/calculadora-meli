@@ -67,6 +67,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .page-sub{font-size:13px;color:var(--text3);margin-top:3px}
 /* Cards */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;box-shadow:var(--card-shadow);transition:background .2s,border-color .2s}
+.cm-card{margin-bottom:16px;border-left:3px solid var(--green)}
+.cm-card>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.cm-card>summary::-webkit-details-marker{display:none}
+.cm-card[open]>summary .cm-toggle{opacity:.6}
 .card-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:14px}
 /* Metric cards */
 .metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
@@ -165,7 +169,20 @@ const REDIRECT_URI = window.location.origin + "/callback";
 
 function loadCosts(){try{return JSON.parse(localStorage.getItem("product_costs")||"{}");}catch(e){return{};}}
 function saveCosts(c){localStorage.setItem("product_costs",JSON.stringify(c));}
-function loadExpenses(){try{return JSON.parse(localStorage.getItem("fixed_expenses")||"[]");}catch(e){return[];}}
+function loadExpenses(){
+  let arr=[]; try{arr=JSON.parse(localStorage.getItem("fixed_expenses")||"[]");}catch(e){arr=[];}
+  // Normaliza / migra: agrega fecha de pago, duración, custom y activo si faltan
+  return arr.map(e=>({
+    id:e.id||(Date.now()+Math.floor(Math.random()*1000)),
+    category:e.category||"Otros",
+    name:e.name||"",
+    amount:parseFloat(e.amount)||0,
+    startDate:e.startDate||"2020-01-01", // viejos: cuentan desde siempre
+    duration:e.duration||"30",            // "7" | "15" | "30" | "custom"
+    customEnd:e.customEnd||"",
+    active:e.active!==false,
+  }));
+}
 function saveExpenses(){localStorage.setItem("fixed_expenses",JSON.stringify(S.expenses));}
 
 const S = {
@@ -429,12 +446,37 @@ function setPeriod(p){
   if(p!=="custom") loadAllOrders();
 }
 
-// Gastos fijos mensuales totales
-function getMonthlyExpenses(){ return S.expenses.reduce((s,e)=>s+(parseFloat(e.amount)||0),0); }
 // Días que abarca el período seleccionado (inclusive)
 function periodDays(){
   const a=new Date(S.dateFrom+"T00:00:00"), b=new Date(S.dateTo+"T00:00:00");
   return Math.max(1,Math.round((b-a)/86400000)+1);
+}
+// Ciclo en días de un gasto (7/15/30 o, en custom, desde la fecha de pago hasta la fecha fin)
+function expenseCycleDays(e){
+  if(e.duration==="custom"){
+    const s=new Date(e.startDate+"T00:00:00"), c=new Date((e.customEnd||e.startDate)+"T00:00:00");
+    return Math.max(1,Math.round((c-s)/86400000)+1);
+  }
+  return parseInt(e.duration)||30;
+}
+// Costo diario del gasto = monto ÷ días del ciclo (se renueva, así que el ritmo diario es constante)
+function expenseDailyRate(e){ return (parseFloat(e.amount)||0)/expenseCycleDays(e); }
+// Cantidad de días del período [from,to] que aplican al gasto (desde su fecha de pago en adelante)
+function expenseDaysInPeriod(e,from,to){
+  const start=new Date(from+"T00:00:00"), payStart=new Date(e.startDate+"T00:00:00");
+  const realStart=start>payStart?start:payStart;
+  const end=new Date(to+"T00:00:00");
+  if(end<realStart) return 0;
+  return Math.round((end-realStart)/86400000)+1;
+}
+// Suma de gastos fijos activos prorrateados al período seleccionado
+function getFixedCostForPeriod(from,to){
+  return S.expenses.filter(e=>e.active!==false)
+    .reduce((s,e)=>s+expenseDailyRate(e)*expenseDaysInPeriod(e,from,to),0);
+}
+// Suma de los costos diarios de todos los gastos activos
+function getDailyFixedTotal(){
+  return S.expenses.filter(e=>e.active!==false).reduce((s,e)=>s+expenseDailyRate(e),0);
 }
 
 function getStats(){
@@ -454,13 +496,15 @@ function getStats(){
   const roas=publiTotal>0?totalVentas/publiTotal:null;          // ventas totales por $1 de publi
   const trueRoas=publiTotal>0?totalGanancia/publiTotal:null;    // ganancia neta por $1 de publi
   const roasAds=publiTotal>0&&S.publiVentasAds>0?S.publiVentasAds/publiTotal:null; // ROAS puro de campañas (MeLi)
-  // Gastos fijos prorrateados al período (mensual × días/30)
-  const gastosFijosMensual=getMonthlyExpenses();
   const dias=periodDays();
-  const gastosFijosPeriodo=gastosFijosMensual*dias/30;
-  const gananciaFinal=totalGanancia-gastosFijosPeriodo;        // ganancia después de costos fijos
-  const margenFinal=totalVentas>0?gananciaFinal/totalVentas:0;
-  return{calcs,totalVentas,totalGanancia,totalComisiones,totalFinanciacion,totalEnvios,totalIIBB,totalPercepciones,totalCostoProducto,totalCostos,margen,tacos,roas,trueRoas,roasAds,publiTotal,gastosFijosMensual,gastosFijosPeriodo,gananciaFinal,margenFinal,dias,count:calcs.length};
+  // Gastos fijos prorrateados por día y acumulados en el período (modelo diario, se renuevan)
+  const gastosFijosPeriodo=getFixedCostForPeriod(S.dateFrom,S.dateTo);
+  const gastosFijosDiario=getDailyFixedTotal();
+  // CONTRIBUCIÓN MARGINAL = ganancia neta − gastos fijos del período (NO afecta las métricas del dashboard)
+  const contribMarginal=totalGanancia-gastosFijosPeriodo;
+  const margenCM=totalVentas>0?contribMarginal/totalVentas:0;          // margen considerando costos fijos
+  const trueRoasCM=publiTotal>0?contribMarginal/publiTotal:null;        // true roas considerando costos fijos
+  return{calcs,totalVentas,totalGanancia,totalComisiones,totalFinanciacion,totalEnvios,totalIIBB,totalPercepciones,totalCostoProducto,totalCostos,margen,tacos,roas,trueRoas,roasAds,publiTotal,gastosFijosPeriodo,gastosFijosDiario,contribMarginal,margenCM,trueRoasCM,dias,count:calcs.length};
 }
 
 function getByProduct(calcs){
@@ -676,10 +720,22 @@ function renderDashboard(el){
       <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Total costos</div><div class="metric-value" style="color:var(--red-text)">${fmt(stats.totalCostos)}</div><div class="metric-sub">Todos los descuentos</div></div>
       <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Comisiones MeLi</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalComisiones)}</div><div class="metric-sub">${fmtPct(stats.totalVentas>0?stats.totalComisiones/stats.totalVentas:0)} sobre ventas</div></div>
     </div>
-    ${stats.gastosFijosMensual>0?`<div class="metrics-grid">
-      <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Gastos fijos (período)</div><div class="metric-value" style="color:var(--red-text)">${fmt(stats.gastosFijosPeriodo)}</div><div class="metric-sub">${fmt(stats.gastosFijosMensual)}/mes · ${stats.dias} días</div></div>
-      <div class="metric" style="border-top-color:${stats.gananciaFinal>=0?"var(--green)":"var(--red)"};border-top-width:3px"><div class="metric-label">💰 Ganancia FINAL</div><div class="metric-value" style="color:${stats.gananciaFinal>=0?"var(--green-text)":"var(--red-text)"}">${fmt(stats.gananciaFinal)}</div><div class="metric-sub">después de gastos fijos · margen ${fmtPct(stats.margenFinal)}</div></div>
-    </div>`:""}
+    ${stats.gastosFijosPeriodo>0?`<details class="card cm-card">
+      <summary>
+        <div>
+          <div class="metric-label">📊 Contribución marginal <span style="font-size:10px;color:var(--text3)">(ganancia − gastos fijos)</span></div>
+          <div style="font-size:24px;font-weight:700;color:${stats.contribMarginal>=0?"var(--green-text)":"var(--red-text)"}">${fmt(stats.contribMarginal)}</div>
+        </div>
+        <span class="cm-toggle" style="font-size:11px;color:var(--text3);white-space:nowrap">ver desglose ▾</span>
+      </summary>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
+        <div><div class="metric-label">Ganancia neta</div><div style="font-weight:700;font-size:16px">${fmt(stats.totalGanancia)}</div></div>
+        <div><div class="metric-label">− Gastos fijos (período)</div><div style="font-weight:700;font-size:16px;color:var(--red-text)">${fmt(-stats.gastosFijosPeriodo)}</div><div class="metric-sub">${fmt(stats.gastosFijosDiario)}/día · ${stats.dias} días</div></div>
+        <div><div class="metric-label">Margen real</div><div style="font-weight:700;font-size:16px;color:${stats.margenCM>=0?"var(--green-text)":"var(--red-text)"}">${fmtPct(stats.margenCM)}</div><div class="metric-sub">vs ${fmtPct(stats.margen)} sin gastos fijos</div></div>
+        ${stats.publiTotal>0?`<div><div class="metric-label">TRUE ROAS real</div><div style="font-weight:700;font-size:16px;color:${stats.trueRoasCM>0?"var(--green-text)":"var(--red-text)"}">${stats.trueRoasCM!==null?stats.trueRoasCM.toFixed(2)+"x":"—"}</div><div class="metric-sub">vs ${stats.trueRoas!==null?stats.trueRoas.toFixed(2)+"x":"—"} sin gastos fijos</div></div>`:""}
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:12px">💡 Esta métrica incluye los costos fijos. El resto del dashboard NO se ve afectado por ellos.</div>
+    </details>`:""}
     ${stats.publiTotal>0?`<div class="metrics-grid">
       <div class="metric" style="border-top-color:var(--green)"><div class="metric-label">ROAS</div><div class="metric-value" style="color:var(--green-text)">${stats.roas?stats.roas.toFixed(2)+"x":"—"}</div><div class="metric-sub">$${stats.roas?stats.roas.toFixed(2):"0"} de ventas por $1 de publi</div></div>
       <div class="metric" style="border-top-color:${stats.trueRoas>0?"var(--green)":"var(--red)"}"><div class="metric-label">TRUE ROAS <span style="font-size:10px;color:var(--text3)">(ganancia)</span></div><div class="metric-value" style="color:${stats.trueRoas>0?"var(--green-text)":"var(--red-text)"}">${stats.trueRoas!==null?stats.trueRoas.toFixed(2)+"x":"—"}</div><div class="metric-sub">$${stats.trueRoas!==null?stats.trueRoas.toFixed(2):"0"} de ganancia neta por $1 de publi</div></div>
@@ -882,8 +938,13 @@ function saveCostInput(input,rerender=true){
 const EXPENSE_CATS=["Empleados","Alquiler","Servicios","Software","Contador / Impuestos","Logística","Marketing","Otros"];
 
 function addExpense(){
-  S.expenses.push({id:Date.now(),category:"Empleados",name:"",amount:0});
+  S.expenses.push({id:Date.now(),category:"Empleados",name:"",amount:0,startDate:today(),duration:"30",customEnd:"",active:true});
   saveExpenses(); renderContent();
+}
+function toggleExpense(id){
+  const e=S.expenses.find(x=>x.id===id);
+  if(!e) return;
+  e.active=!e.active; saveExpenses(); renderContent();
 }
 function deleteExpense(id){
   S.expenses=S.expenses.filter(e=>e.id!==id);
@@ -898,53 +959,70 @@ function updateExpense(id,field,value,rerender){
 }
 
 function renderExpenses(el){
-  const mensual=getMonthlyExpenses();
-  const anual=mensual*12;
   const dias=periodDays();
-  const periodo=mensual*dias/30;
+  const diario=getDailyFixedTotal();                       // costo por día (gastos activos)
+  const periodo=getFixedCostForPeriod(S.dateFrom,S.dateTo); // prorrateado al período
+  const proy30=diario*30;                                  // proyección mensual
   const stats=S.orders.length?getStats():null;
+  const activos=S.expenses.filter(e=>e.active!==false).length;
 
   el.innerHTML=`
-    <div class="page-header"><div><div class="page-title">Gastos fijos</div><div class="page-sub">Costos fijos del negocio (empleados, alquiler, servicios) · se descuentan de tu ganancia</div></div></div>
+    <div class="page-header"><div><div class="page-title">Gastos fijos</div><div class="page-sub">Costos fijos (empleados, alquiler, etc.) · se prorratean por día y se descuentan en Contribución Marginal</div></div></div>
+    ${periodBar()}
     <div class="metrics-grid">
-      <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Total mensual</div><div class="metric-value" style="color:var(--red-text)">${fmt(mensual)}</div><div class="metric-sub">${S.expenses.length} gasto${S.expenses.length===1?"":"s"} cargado${S.expenses.length===1?"":"s"}</div></div>
-      <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Total anual</div><div class="metric-value" style="color:var(--orange-text)">${fmt(anual)}</div><div class="metric-sub">proyección 12 meses</div></div>
-      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">En el período (${dias} días)</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(periodo)}</div><div class="metric-sub">prorrateado al período cargado</div></div>
-      <div class="metric" style="border-top-color:${stats&&stats.gananciaFinal>=0?"var(--green)":"var(--red)"}"><div class="metric-label">Ganancia final</div><div class="metric-value" style="color:${stats?(stats.gananciaFinal>=0?"var(--green-text)":"var(--red-text)"):"var(--text3)"}">${stats?fmt(stats.gananciaFinal):"—"}</div><div class="metric-sub">${stats?"neta − gastos fijos · margen "+fmtPct(stats.margenFinal):"cargá ventas en el Dashboard"}</div></div>
+      <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Costo por día</div><div class="metric-value" style="color:var(--red-text)">${fmt(diario)}</div><div class="metric-sub">${activos} de ${S.expenses.length} activos</div></div>
+      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">En el período (${dias} día${dias===1?"":"s"})</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(periodo)}</div><div class="metric-sub">${S.dateFrom} → ${S.dateTo}</div></div>
+      <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Proyección 30 días</div><div class="metric-value" style="color:var(--orange-text)">${fmt(proy30)}</div><div class="metric-sub">ritmo diario × 30</div></div>
+      <div class="metric" style="border-top-color:${stats?(stats.contribMarginal>=0?"var(--green)":"var(--red)"):"var(--border2)"}"><div class="metric-label">Contribución marginal</div><div class="metric-value" style="color:${stats?(stats.contribMarginal>=0?"var(--green-text)":"var(--red-text)"):"var(--text3)"}">${stats?fmt(stats.contribMarginal):"—"}</div><div class="metric-sub">${stats?"ganancia − gastos del período":"cargá ventas en el Dashboard"}</div></div>
     </div>
     <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <span>💡 Cargá tus costos fijos <b>mensuales</b>. Se prorratean automáticamente según el período que mires y se restan de la ganancia.</span>
+      <span>💡 Poné el <b>monto</b>, <b>desde cuándo se paga</b> y <b>cada cuánto</b> (7/15/30 días o custom). El gasto se reparte por día y se renueva solo al terminar. Apagá el toggle para pausarlo.</span>
       <button class="btn-primary" style="white-space:nowrap;padding:6px 16px;font-size:13px" onclick="addExpense()">+ Agregar gasto</button>
     </div>
     <div class="table-wrap">
       <div class="table-header"><span class="table-title">▸ ${S.expenses.length} gastos fijos</span></div>
       ${!S.expenses.length?`<div class="empty">No tenés gastos cargados.<br><button class="btn-primary" style="margin-top:12px" onclick="addExpense()">+ Agregar el primero</button></div>`:`
       <table>
-        <thead><tr><th>Categoría</th><th>Concepto</th><th class="r">Monto mensual</th><th class="r">% del total</th><th></th></tr></thead>
+        <thead><tr><th>Activo</th><th>Categoría</th><th>Concepto</th><th class="r">Monto</th><th>Desde</th><th>Cada</th><th class="r">Por día</th><th class="r">En período</th><th></th></tr></thead>
         <tbody>
           ${S.expenses.map(e=>{
-            const pct=mensual>0?(parseFloat(e.amount)||0)/mensual:0;
-            return`<tr>
+            const off=e.active===false;
+            const rate=expenseDailyRate(e);
+            const enPeriodo=off?0:rate*expenseDaysInPeriod(e,S.dateFrom,S.dateTo);
+            return`<tr style="opacity:${off?".5":"1"}">
+              <td><label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer">
+                <input type="checkbox" ${off?"":"checked"} onchange="toggleExpense(${e.id})" style="opacity:0;width:0;height:0;position:absolute">
+                <span style="position:absolute;inset:0;background:${off?"var(--border2)":"var(--green)"};border-radius:20px;transition:.2s"></span>
+                <span style="position:absolute;top:2px;left:${off?"2":"18"}px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s"></span>
+              </label></td>
               <td>
                 <select onchange="updateExpense(${e.id},'category',this.value,false)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;outline:none">
                   ${EXPENSE_CATS.map(c=>`<option ${e.category===c?"selected":""}>${c}</option>`).join("")}
                 </select>
               </td>
-              <td><input type="text" value="${(e.name||"").replace(/"/g,"&quot;")}" placeholder="Ej. Sueldo Juan, Alquiler depósito..." onchange="updateExpense(${e.id},'name',this.value,false)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;width:100%;outline:none"></td>
+              <td><input type="text" value="${(e.name||"").replace(/"/g,"&quot;")}" placeholder="Ej. Sueldo Juan..." onchange="updateExpense(${e.id},'name',this.value,false)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;width:130px;outline:none"></td>
               <td class="r">
-                <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
+                <div style="display:flex;align-items:center;justify-content:flex-end;gap:3px">
                   <span style="font-size:11px;color:var(--text3)">$</span>
-                  <input class="cost-input" type="number" value="${e.amount||""}" placeholder="0" min="0" step="1" onchange="updateExpense(${e.id},'amount',this.value,true)">
+                  <input class="cost-input" style="width:90px" type="number" value="${e.amount||""}" placeholder="0" min="0" step="1" onchange="updateExpense(${e.id},'amount',this.value,true)">
                 </div>
               </td>
-              <td class="r neutral">${fmtPct(pct)}</td>
+              <td><input type="date" value="${e.startDate||""}" onchange="updateExpense(${e.id},'startDate',this.value,true)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 6px;color:var(--text);font-size:11px;outline:none"></td>
+              <td>
+                <select onchange="updateExpense(${e.id},'duration',this.value,true)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text);font-size:12px;outline:none">
+                  ${[["7","7 días"],["15","15 días"],["30","30 días"],["custom","Custom"]].map(([v,l])=>`<option value="${v}" ${e.duration===v?"selected":""}>${l}</option>`).join("")}
+                </select>
+                ${e.duration==="custom"?`<input type="date" value="${e.customEnd||""}" title="Fin del ciclo" onchange="updateExpense(${e.id},'customEnd',this.value,true)" style="margin-top:3px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:3px 5px;color:var(--text);font-size:11px;outline:none;display:block">`:""}
+              </td>
+              <td class="r neutral">${fmt(rate)}</td>
+              <td class="r ${enPeriodo>0?"neg":"neutral"}">${enPeriodo>0?fmt(-enPeriodo):"—"}</td>
               <td class="r"><button onclick="deleteExpense(${e.id})" title="Eliminar" style="background:none;border:none;color:var(--red-text);cursor:pointer;font-size:16px;padding:2px 6px">🗑</button></td>
             </tr>`;
           }).join("")}
         </tbody>
         <tfoot><tr style="border-top:2px solid var(--border2);font-weight:700">
-          <td colspan="2" class="text">TOTAL MENSUAL</td>
-          <td class="r neg">${fmt(mensual)}</td><td colspan="2"></td>
+          <td colspan="6" class="text">TOTAL ACTIVOS</td>
+          <td class="r neg">${fmt(diario)}/día</td><td class="r neg">${fmt(-periodo)}</td><td></td>
         </tr></tfoot>
       </table>`}
     </div>`;
