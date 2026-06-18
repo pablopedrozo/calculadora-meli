@@ -1,12 +1,12 @@
 const https = require("https");
 
-function apiGet(host, path, token) {
+function apiGet(host, path, token, extraHeaders) {
   return new Promise((resolve) => {
     const options = {
       hostname: host,
       path,
       method: "GET",
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(extraHeaders || {}) },
     };
     const req = https.request(options, (res) => {
       let raw = "";
@@ -77,15 +77,24 @@ exports.handler = async (event) => {
       out.shipment_items = { status: items.status, body: items.body };
     }
 
-    // 5. Billing / fee detail endpoints (per-sale fee breakdown)
-    out.billing_attempts = {};
-    const billPaths = [
-      [ML, `/billing/integration/monthly/periods?group=ML&document_type=BILL`],
-      [ML, `/users/${user_id}/mercadolibre/fees?order_id=${oid}`],
+    // 5. PUBLICIDAD (Product Ads) — endpoints nuevos marketplace con Api-Version
+    out.advertising = {};
+    const advList = await apiGet(ML, `/advertising/advertisers?product_id=PADS`, token, { "Api-Version": "1" });
+    out.advertising.advertisers = { status: advList.status, body: advList.body };
+    const advId = advList.body?.advertisers?.[0]?.advertiser_id || advList.body?.advertisers?.[0]?.id || 703867;
+    out.advertising.advertiser_id = advId;
+
+    const f = from || "2026-05-18", t = to || "2026-06-17";
+    const advPaths = [
+      `/advertising/MLA/advertisers/${advId}/product_ads/campaigns/search?date_from=${f}&date_to=${t}&limit=50&metrics=clicks,prints,cost,cpc,acos,total_amount&metrics_summary=true`,
+      `/marketplace/advertising/MLA/advertisers/${advId}/product_ads/campaigns/search?date_from=${f}&date_to=${t}&limit=50&metrics=cost,total_amount&metrics_summary=true`,
+      `/advertising/advertisers/${advId}/product_ads/campaigns/search?date_from=${f}&date_to=${t}&limit=50&metrics=cost`,
     ];
-    for (const [h, p] of billPaths) {
-      const r = await apiGet(h, p, token);
-      out.billing_attempts[p] = { status: r.status, body: typeof r.body === "object" ? r.body : String(r.body).slice(0, 300) };
+    for (const p of advPaths) {
+      for (const ver of ["1", "2"]) {
+        const r = await apiGet(ML, p, token, { "Api-Version": ver });
+        out.advertising[`v${ver} ${p.split("?")[0]}`] = { status: r.status, body: r.body };
+      }
     }
 
     return {

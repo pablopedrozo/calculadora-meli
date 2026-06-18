@@ -1,104 +1,84 @@
 const https = require("https");
 
-function apiGet(path, token, hostname = "api.mercadolibre.com") {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(`https://${hostname}${path}`);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "X-Caller-Id": "1877728575",
-      },
-    };
+function apiGet(path, token, apiVersion) {
+  return new Promise((resolve) => {
+    const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+    if (apiVersion) headers["Api-Version"] = String(apiVersion);
+    const options = { hostname: "api.mercadolibre.com", path, method: "GET", headers };
     const req = https.request(options, (res) => {
       let raw = "";
       res.on("data", (c) => (raw += c));
       res.on("end", () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch (e) { resolve({ status: res.statusCode, body: raw.slice(0, 300) }); }
+        let body; try { body = JSON.parse(raw); } catch (e) { body = raw.slice(0, 400); }
+        resolve({ status: res.statusCode, body });
       });
     });
-    req.on("error", reject);
+    req.on("error", (e) => resolve({ status: 0, body: { error: e.message } }));
     req.end();
   });
 }
 
+// Suma el gasto (cost) de un array de campañas, probando nombres de campo conocidos
+function sumSpend(items) {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce((s, c) => {
+    const m = c.metrics || c;
+    const cost = m.cost ?? m.total_amount ?? m.spend ?? m.amount ?? m.investment ?? 0;
+    return s + (Number(cost) || 0);
+  }, 0);
+}
+
 exports.handler = async (event) => {
-  const { token, user_id, from, to } = event.queryStringParameters || {};
+  const { token, user_id, from, to, site = "MLA" } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
   const debug = {};
 
-  // Step 1: get advertiser ID (this endpoint is known to work with product_id=PADS)
+  // 1. Advertiser ID (endpoint conocido que funciona)
   let advertiser_id = null;
-  try {
-    const r = await apiGet(`/advertising/advertisers?user_id=${user_id}&product_id=PADS`, token);
-    debug.advertisers = { status: r.status, body: r.body };
-    if (r.status === 200) {
-      const results = r.body?.results || r.body?.advertisers || (Array.isArray(r.body) ? r.body : []);
-      advertiser_id = results[0]?.id || results[0]?.advertiser_id || r.body?.id || null;
-    }
-  } catch (e) { debug.advertisers = { error: e.message }; }
+  const adv = await apiGet(`/advertising/advertisers?product_id=PADS`, token, 1);
+  debug.advertisers = { status: adv.status, body: adv.body };
+  if (adv.status === 200) {
+    const list = adv.body?.advertisers || adv.body?.results || (Array.isArray(adv.body) ? adv.body : []);
+    advertiser_id = list[0]?.advertiser_id || list[0]?.id || null;
+  }
+  if (!advertiser_id) advertiser_id = 703867; // fallback conocido de la cuenta
 
-  // Step 2: try money movements filtered by PADS (advertising charges appear as account debits)
-  const movEndpoints = [
-    `/users/${user_id}/movements?type=charge&category=product_ads&date_from=${from}&date_to=${to}&limit=200`,
-    `/users/${user_id}/movements?tags=pads&date_from=${from}&date_to=${to}&limit=200`,
-    `/users/${user_id}/balance/movements?type=PRODUCT_ADS&date_from=${from}T00:00:00-03:00&date_to=${to}T23:59:59-03:00&limit=200`,
-    `/users/${user_id}/balance/movements?category=product_ads&date_from=${from}T00:00:00-03:00&date_to=${to}T23:59:59-03:00&limit=200`,
-    `/users/${user_id}/payouts/search?type=product_ads&begin_date=${from}T00:00:00-03:00&end_date=${to}T23:59:59-03:00`,
+  // 2. Endpoints nuevos (marketplace) — los viejos se deprecaron feb 2026
+  const metricFields = "clicks,prints,cost,cpc,acos,total_amount";
+  const candidates = [
+    `/advertising/${site}/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}&metrics_summary=true`,
+    `/marketplace/advertising/${site}/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}&metrics_summary=true`,
+    `/advertising/product_ads/${site}/advertisers/${advertiser_id}/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}`,
+    `/advertising/advertisers/${advertiser_id}/product_ads/campaigns/search?date_from=${from}&date_to=${to}&limit=100&metrics=${metricFields}`,
   ];
 
-  for (const path of movEndpoints) {
-    try {
-      const r = await apiGet(path, token);
-      debug[path] = { status: r.status };
-      if (r.status === 200) {
-        const items = r.body?.movements || r.body?.results || r.body?.data || (Array.isArray(r.body) ? r.body : []);
-        if (Array.isArray(items) && items.length > 0) {
-          const total_spent = items.reduce((s, m) => s + Math.abs(m.amount || m.total || 0), 0);
-          return {
-            statusCode: 200,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ total_spent, available: total_spent > 0, advertiser_id, endpoint: path, debug }),
-          };
-        }
-      }
-    } catch (e) { debug[path] = { error: e.message }; }
-  }
+  let total_spent = 0;
+  let endpoint = null;
 
-  // Step 3: try direct campaign summary endpoints if we have an advertiser_id
-  if (advertiser_id) {
-    const advEndpoints = [
-      `/advertising/advertisers/${advertiser_id}/summary?product_id=PADS&date_from=${from}&date_to=${to}`,
-      `/advertising/advertisers/${advertiser_id}?product_id=PADS&date_from=${from}&date_to=${to}`,
-      `/advertising/product_ads/advertisers/${advertiser_id}/summary?date_from=${from}&date_to=${to}`,
-      `/advertising/product_ads/advertisers/${advertiser_id}/campaigns?status=ACTIVE,PAUSED&date_from=${from}&date_to=${to}&limit=50`,
-    ];
-    for (const path of advEndpoints) {
-      try {
-        const r = await apiGet(path, token);
-        debug[path] = { status: r.status, body_preview: JSON.stringify(r.body).slice(0, 200) };
-        if (r.status === 200) {
-          const spend = r.body?.total_spent || r.body?.totalSpend || r.body?.spend || r.body?.daily_spent || 0;
-          if (spend > 0) {
-            return {
-              statusCode: 200,
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ total_spent: spend, available: true, advertiser_id, endpoint: path, debug }),
-            };
-          }
-        }
-      } catch (e) { debug[path] = { error: e.message }; }
+  for (const path of candidates) {
+    // probar con Api-Version 1 y 2
+    for (const ver of [1, 2]) {
+      const r = await apiGet(path, token, ver);
+      const key = `v${ver} ${path.split("?")[0]}`;
+      debug[key] = { status: r.status, body_preview: typeof r.body === "object" ? JSON.stringify(r.body).slice(0, 250) : r.body };
+      if (r.status === 200 && r.body) {
+        // El resumen de métricas puede venir en metrics_summary o sumando results
+        const summary = r.body.metrics_summary || r.body.metrics || null;
+        const fromSummary = summary ? (summary.cost ?? summary.total_amount ?? 0) : 0;
+        const fromList = sumSpend(r.body.results || r.body.campaigns || []);
+        const spend = Number(fromSummary) || fromList;
+        if (spend > 0) { total_spent = spend; endpoint = key; break; }
+        // status 200 pero sin gasto: igual lo damos por válido (puede ser 0 real)
+        if (!endpoint) { endpoint = key; }
+      }
     }
+    if (total_spent > 0) break;
   }
 
   return {
     statusCode: 200,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent: 0, available: false, advertiser_id, debug }),
+    body: JSON.stringify({ total_spent, available: total_spent > 0, advertiser_id, endpoint, debug }),
   };
 };
