@@ -81,7 +81,7 @@ exports.handler = async (event) => {
     out.advertising = {};
     const advList = await apiGet(ML, `/advertising/advertisers?product_id=PADS`, token, { "Api-Version": "1" });
     out.advertising.advertisers = { status: advList.status, body: advList.body };
-    const advId = advList.body?.advertisers?.[0]?.advertiser_id || advList.body?.advertisers?.[0]?.id || 703867;
+    const advId = advList.body?.advertisers?.[0]?.advertiser_id || advList.body?.advertisers?.[0]?.id || null;
     out.advertising.advertiser_id = advId;
 
     const f = from || "2026-05-18", t = to || "2026-06-17";
@@ -90,10 +90,12 @@ exports.handler = async (event) => {
       `/marketplace/advertising/MLA/advertisers/${advId}/product_ads/campaigns/search?date_from=${f}&date_to=${t}&limit=50&metrics=cost,total_amount&metrics_summary=true`,
       `/advertising/advertisers/${advId}/product_ads/campaigns/search?date_from=${f}&date_to=${t}&limit=50&metrics=cost`,
     ];
-    for (const p of advPaths) {
-      for (const ver of ["1", "2"]) {
-        const r = await apiGet(ML, p, token, { "Api-Version": ver });
-        out.advertising[`v${ver} ${p.split("?")[0]}`] = { status: r.status, body: r.body };
+    if (advId) {
+      for (const p of advPaths) {
+        for (const ver of ["1", "2"]) {
+          const r = await apiGet(ML, p, token, { "Api-Version": ver });
+          out.advertising[`v${ver} ${p.split("?")[0]}`] = { status: r.status, body: r.body };
+        }
       }
     }
 
