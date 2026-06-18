@@ -57,16 +57,25 @@ exports.handler = async (event) => {
       const installments = payment?.installments || 1;
 
       // Debug solo para la primera orden
+      // Campos del pago disponibles directamente en la orden (sin llamar /payments/{id})
+      const pay_shipping = payment?.shipping_cost || 0;      // envío dentro del pago
+      const pay_taxes = payment?.taxes_amount || 0;          // IIBB/impuestos retenidos
+      const pay_total = payment?.total_paid_amount || 0;     // total cobrado al comprador
+      const pay_installment = payment?.installment_amount || 0; // monto por cuota
+
+      // Comisión pura = sale_fee - envío del pago - impuestos del pago
+      const commission_pure = Math.max(0, sale_fee_total - pay_shipping - pay_taxes);
+
       const debug = idx === 0 ? {
         sale_fee_total,
+        pay_shipping,
+        pay_taxes,
+        pay_total,
+        pay_installment,
         shipping_from_shipment: shipping_cost,
         transaction_amount,
         net_received,
         installments,
-        payment_fields: payment ? Object.keys(payment) : [],
-        payment_status: payment?.status,
-        payment_type: payment?.payment_type,
-        payment_method: payment?.payment_method_id,
       } : undefined;
 
       return {
@@ -74,14 +83,12 @@ exports.handler = async (event) => {
         date: order.date_created,
         status: order.status,
         total_amount: order.total_amount || 0,
-        // commission = sale_fee total: incluye comisión MeLi + envío (si aplica) + financiación cuotas
-        commission: sale_fee_total,
-        // shipping_cost = costo envío cobrado APARTE de sale_fee (0 para Mercado Envíos Full/gratis)
-        shipping_cost,
+        commission: commission_pure,
+        shipping_cost: pay_shipping || shipping_cost,
+        iibb_real: pay_taxes,
         shipment_id: shipmentId || null,
         payment_method: payment?.payment_method_id || null,
         installments,
-        iibb_real: 0, // fee_details no disponible para esta cuenta — usar % configurado
         net_received,
         debug,
         items: items.map(i => ({

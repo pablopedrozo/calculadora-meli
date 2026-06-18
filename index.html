@@ -240,9 +240,8 @@ function calcOrder(o){
   const comision = o.commission||0;
   // envío = costo adicional SEPARADO de sale_fee (0 para Mercado Envíos Full/gratis)
   const envio = o.shipping_cost||0;
-  // IIBB ya está incluido en sale_fee (comision), no se suma separado para no doble-contar
-  // Solo se muestra en el resumen del dashboard como referencia
-  const iibb = 0;
+  // IIBB: usar valor real del pago si está disponible, sino % configurado
+  const iibb = (o.iibb_real && o.iibb_real > 0) ? o.iibb_real : precio*(S.iibbPct/100);
   const percepciones = precio*(S.percepcionesPct/100);
   const publiTotal = S.publiFromAPI?S.publiARS:S.publiManual;
   const totalOrds = S.orders.length||1;
@@ -597,19 +596,21 @@ marketplace_fee del orden: <b>${S.debugOrder.commission_from_order?.toFixed(2)}<
 envío desde fee_details: <b>${S.debugOrder.shipping_from_fee_details?.toFixed(2)}</b>
 shipment base_cost: <b>${S.debugOrder.shipment_base_cost?.toFixed(2)}</b>
 shipment option_cost: <b>${S.debugOrder.shipment_option_cost?.toFixed(2)}</b>
-sale_fee total: <b>${S.debugOrder.sale_fee_total?.toFixed(2)}</b>
-envío separado (option_cost): <b>${S.debugOrder.shipping_from_shipment?.toFixed(2)}</b>
-transaction_amount (pago): <b>${S.debugOrder.transaction_amount?.toFixed(2)}</b>
-net_received (pago): <b>${S.debugOrder.net_received?.toFixed(2)}</b>
+sale_fee total (todos los costos MeLi): <b>${S.debugOrder.sale_fee_total?.toFixed(2)}</b>
+pay_shipping (envío dentro del pago): <b>${S.debugOrder.pay_shipping?.toFixed(2)}</b>
+pay_taxes (IIBB/impuestos retenidos): <b>${S.debugOrder.pay_taxes?.toFixed(2)}</b>
+pay_total (total cobrado al comprador): <b>${S.debugOrder.pay_total?.toFixed(2)}</b>
+pay_installment (monto por cuota): <b>${S.debugOrder.pay_installment?.toFixed(2)}</b>
+comisión pura (sale_fee - envío - impuestos): <b>${S.debugOrder.sale_fee_total&&(S.debugOrder.sale_fee_total-S.debugOrder.pay_shipping-S.debugOrder.pay_taxes).toFixed(2)}</b>
+transaction_amount: <b>${S.debugOrder.transaction_amount?.toFixed(2)}</b>
 cuotas: <b>${S.debugOrder.installments}</b>
-campos del pago: <b>${(S.debugOrder.payment_fields||[]).join(", ")||"—"}</b>
 </div>`:""}
     ${!stats?`<div class="empty">Seleccioná un período y cargá las ventas.</div>`:`
     <div class="table-wrap">
-      <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span><span style="font-size:11px;color:var(--text3);margin-left:8px">* Fees MeLi = comisión + envío + IIBB + cuotas (bundleados por MeLi)</span></div>
+      <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span></div>
       <table>
         <thead><tr>
-          <th>Producto</th><th>Fecha</th><th class="r">Precio</th><th class="r">Costo prod.</th><th class="r">Fees MeLi*</th><th class="r">Envío extra</th><th class="r">Percep.</th><th class="r">Ganancia</th><th class="r">Margen</th><th>Estado</th>
+          <th>Producto</th><th>Fecha</th><th class="r">Precio</th><th class="r">Costo prod.</th><th class="r">Comisión</th><th class="r">Envío</th><th class="r">IIBB</th><th class="r">Percep.</th><th class="r">Ganancia</th><th class="r">Margen</th><th>Estado</th>
         </tr></thead>
         <tbody>
           ${pageOrders.map(o=>{
@@ -622,8 +623,9 @@ campos del pago: <b>${(S.debugOrder.payment_fields||[]).join(", ")||"—"}</b>
               <td class="neutral">${fecha}</td>
               <td class="r">${fmt(o.precio)}</td>
               <td class="r ${o.costoProducto>0?"neg":"neutral"}">${o.costoProducto>0?fmt(-o.costoProducto):"—"}</td>
-              <td class="r neg" title="sale_fee real: comisión + envío + IIBB + cuotas">${fmt(-o.comision)}<small style="display:block;color:var(--text3);font-size:10px">${o.precio>0?((o.comision/o.precio)*100).toFixed(1)+"%":""}</small></td>
-              <td class="r ${o.envio>0?"neg":"neutral"}">${o.envio>0?fmt(-o.envio):"incl."}</td>
+              <td class="r neg">${fmt(-o.comision)}<small style="display:block;color:var(--text3);font-size:10px">${o.precio>0?((o.comision/o.precio)*100).toFixed(1)+"%":""}</small></td>
+              <td class="r ${o.envio>0?"neg":"neutral"}">${o.envio>0?fmt(-o.envio):"—"}</td>
+              <td class="r neg">${fmt(-o.iibb)}<small style="display:block;color:var(--text3);font-size:10px">${o.iibb_real>0?"real":S.iibbPct+"%"}</small></td>
               <td class="r neg">${fmt(-o.percepciones)}</td>
               <td class="r ${o.ganancia>=0?"pos":"neg"}">${fmt(o.ganancia)}</td>
               <td class="r ${o.margen>=0?"pos":"neg"}">${fmtPct(o.margen)}</td>
