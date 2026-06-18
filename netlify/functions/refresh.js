@@ -3,7 +3,6 @@ const querystring = require("querystring");
 
 const CLIENT_ID = process.env.MELI_CLIENT_ID;
 const CLIENT_SECRET = process.env.MELI_CLIENT_SECRET;
-const REDIRECT_URI = process.env.MELI_REDIRECT_URI;
 
 function httpsPost(url, data) {
   return new Promise((resolve, reject) => {
@@ -22,9 +21,7 @@ function httpsPost(url, data) {
     const req = https.request(options, (res) => {
       let raw = "";
       res.on("data", (c) => (raw += c));
-      res.on("end", () => {
-        try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
-      });
+      res.on("end", () => { try { resolve(JSON.parse(raw)); } catch (e) { reject(e); } });
     });
     req.on("error", reject);
     req.write(body);
@@ -33,30 +30,25 @@ function httpsPost(url, data) {
 }
 
 exports.handler = async (event) => {
-  const { code } = event.queryStringParameters || {};
-  if (!code) {
-    return { statusCode: 400, body: JSON.stringify({ error: "No code" }) };
-  }
+  const { refresh_token } = event.queryStringParameters || {};
+  if (!refresh_token) return { statusCode: 400, body: JSON.stringify({ error: "No refresh_token" }) };
 
   try {
     const result = await httpsPost("https://api.mercadolibre.com/oauth/token", {
-      grant_type: "authorization_code",
+      grant_type: "refresh_token",
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
-      code,
-      redirect_uri: REDIRECT_URI,
+      refresh_token,
     });
 
-    if (result.error) {
-      return { statusCode: 400, body: JSON.stringify(result) };
-    }
+    if (result.error) return { statusCode: 400, body: JSON.stringify(result) };
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         access_token: result.access_token,
-        refresh_token: result.refresh_token,
+        refresh_token: result.refresh_token, // MeLi rota el refresh_token: hay que guardarlo
         user_id: result.user_id,
         expires_in: result.expires_in || 21600,
       }),

@@ -168,6 +168,8 @@ function saveCosts(c){localStorage.setItem("product_costs",JSON.stringify(c));}
 
 const S = {
   token: localStorage.getItem("meli_token"),
+  refreshToken: localStorage.getItem("meli_refresh"),
+  tokenExp: parseInt(localStorage.getItem("meli_token_exp")||"0"),
   userId: localStorage.getItem("meli_user_id"),
   nickname: localStorage.getItem("meli_nickname"),
   percepcionesPct: parseFloat(localStorage.getItem("percPct")||"0"),
@@ -270,6 +272,32 @@ async function apiFn(name,params){
   return r.json();
 }
 
+function saveSession(res){
+  S.token=res.access_token;
+  S.userId=String(res.user_id);
+  if(res.refresh_token){ S.refreshToken=res.refresh_token; localStorage.setItem("meli_refresh",res.refresh_token); }
+  S.tokenExp=Date.now()+((res.expires_in||21600)*1000);
+  localStorage.setItem("meli_token",S.token);
+  localStorage.setItem("meli_user_id",S.userId);
+  localStorage.setItem("meli_token_exp",String(S.tokenExp));
+}
+
+// Renueva el access_token usando el refresh_token si está por vencer (margen de 5 min).
+// MeLi rota el refresh_token en cada uso, así que hay que guardar el nuevo.
+async function ensureToken(){
+  if(!S.token||!S.refreshToken) return;
+  if(Date.now() < S.tokenExp - 5*60*1000) return; // todavía válido
+  try{
+    const res = await apiFn("refresh",{refresh_token:S.refreshToken});
+    if(res.access_token){
+      saveSession(res); // guarda el nuevo access + el refresh rotado + nueva expiración
+    }else{
+      // refresh_token vencido/revocado → forzar re-login
+      doLogout();
+    }
+  }catch(e){ /* si falla la red, seguimos con el token actual */ }
+}
+
 async function handleCallback(){
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
@@ -278,9 +306,7 @@ async function handleCallback(){
   try{
     const res = await apiFn("auth",{code});
     if(res.access_token){
-      S.token=res.access_token; S.userId=String(res.user_id);
-      localStorage.setItem("meli_token",S.token);
-      localStorage.setItem("meli_user_id",S.userId);
+      saveSession(res);
       const user = await apiFn("user",{token:S.token,user_id:S.userId});
       S.nickname=user.nickname||"Usuario";
       localStorage.setItem("meli_nickname",S.nickname);
@@ -296,8 +322,9 @@ function doLogin(){
   window.location.href=`https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&state=${rand}`;
 }
 function doLogout(){
-  localStorage.clear(); S.productCosts={};
-  Object.assign(S,{token:null,userId:null,nickname:null,orders:[],total:0,publiARS:0,publiFromAPI:false});
+  // Borra solo la sesión; conserva costos de productos y configuración del usuario
+  ["meli_token","meli_refresh","meli_token_exp","meli_user_id","meli_nickname"].forEach(k=>localStorage.removeItem(k));
+  Object.assign(S,{token:null,refreshToken:null,tokenExp:0,userId:null,nickname:null,orders:[],total:0,publiARS:0,publiFromAPI:false,publiCampaigns:[],allItems:[]});
   render();
 }
 
@@ -320,6 +347,7 @@ async function loadAdvertising(){
 // Trae TODAS las publicaciones del vendedor (para poder cargar costos aunque no se hayan vendido)
 async function loadAllItems(){
   if(!S.token) return;
+  await ensureToken();
   S.itemsLoading=true; if(S.page==="products") renderContent();
   try{
     const data = await apiFn("items",{token:S.token,user_id:S.userId});
@@ -331,6 +359,7 @@ async function loadAllItems(){
 
 // Load ALL orders for the period (auto-paginate up to 500)
 async function loadAllOrders(){
+  await ensureToken();
   S.loading=true; S.error=null; S.orders=[]; S.total=0;
   renderContent();
   try{
@@ -818,7 +847,11 @@ function exportCSV(){
 
 async function render(){
   await handleCallback();
-  if(S.token){renderShell();renderContent();loadAllOrders();}
+  if(S.token){
+    await ensureToken();            // renueva la sesión si está por vencer (sin re-login)
+    if(S.token){renderShell();renderContent();loadAllOrders();}
+    else renderAuth();
+  }
   else renderAuth();
 }
 render();
