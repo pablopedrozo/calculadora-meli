@@ -51,14 +51,21 @@ exports.handler = async (event) => {
   // Desglose de campañas con gasto en el período
   const campaigns = (r.body.results || [])
     .filter((c) => (c.metrics?.cost || 0) > 0)
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      status: c.status,
-      cost: c.metrics.cost,
-      ventas: c.metrics.total_amount || 0,
-      acos: c.metrics.acos || 0,
-    }))
+    .map((c) => {
+      const cost = c.metrics.cost;
+      const ventas = c.metrics.total_amount || 0;
+      return {
+        id: c.id,
+        name: c.name,
+        status: c.status,
+        cost,
+        ventas,
+        acos: c.metrics.acos || 0,
+        acos_target: c.acos_target || 0,    // objetivo de ACOS que fijó el vendedor
+        roas: cost > 0 ? ventas / cost : 0, // ventas atribuidas por $1 de publi
+        budget: c.budget || 0,
+      };
+    })
     .sort((a, b) => b.cost - a.cost);
 
   return json({ total_spent, ventas_ads, acos, available: total_spent > 0, advertiser_id, campaigns });

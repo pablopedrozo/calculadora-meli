@@ -392,8 +392,10 @@ function getStats(){
   const publiTotal=S.publiFromAPI?S.publiARS:S.publiManual;
   const margen=totalVentas>0?totalGanancia/totalVentas:0;
   const tacos=totalVentas>0&&publiTotal>0?publiTotal/totalVentas:0;
-  const trueRoas=publiTotal>0?totalGanancia/publiTotal:null;
-  return{calcs,totalVentas,totalGanancia,totalComisiones,totalFinanciacion,totalEnvios,totalIIBB,totalPercepciones,totalCostoProducto,totalCostos,margen,tacos,trueRoas,publiTotal,count:calcs.length};
+  const roas=publiTotal>0?totalVentas/publiTotal:null;          // ventas totales por $1 de publi
+  const trueRoas=publiTotal>0?totalGanancia/publiTotal:null;    // ganancia neta por $1 de publi
+  const roasAds=publiTotal>0&&S.publiVentasAds>0?S.publiVentasAds/publiTotal:null; // ROAS puro de campañas (MeLi)
+  return{calcs,totalVentas,totalGanancia,totalComisiones,totalFinanciacion,totalEnvios,totalIIBB,totalPercepciones,totalCostoProducto,totalCostos,margen,tacos,roas,trueRoas,roasAds,publiTotal,count:calcs.length};
 }
 
 function getByProduct(calcs){
@@ -410,6 +412,16 @@ function getByProduct(calcs){
     });
   });
   return Object.values(map).sort((a,b)=>b.ganancia-a.ganancia);
+}
+
+// Recomendación por campaña según ACOS real vs objetivo del vendedor
+function campaignAdvice(c){
+  const target=c.acos_target>0?c.acos_target:25;
+  if(c.ventas===0||c.acos===0) return {label:"Sin ventas",color:"var(--red-text)",bg:"var(--red-bg)"};
+  if(c.acos<=target*0.7) return {label:"Escalar 🚀",color:"var(--green-text)",bg:"var(--green-bg)"};
+  if(c.acos<=target) return {label:"Rinde ✓",color:"var(--green-text)",bg:"var(--green-bg)"};
+  if(c.acos<=target*1.3) return {label:"Vigilar",color:"var(--orange-text)",bg:"var(--orange-bg)"};
+  return {label:"Revisar 🔴",color:"var(--red-text)",bg:"var(--red-bg)"};
 }
 
 // Combina TODAS las publicaciones del catálogo con los datos de ventas del período.
@@ -589,6 +601,12 @@ function renderDashboard(el){
       <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Total costos</div><div class="metric-value" style="color:var(--red-text)">${fmt(stats.totalCostos)}</div><div class="metric-sub">Todos los descuentos</div></div>
       <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Comisiones MeLi</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalComisiones)}</div><div class="metric-sub">${fmtPct(stats.totalVentas>0?stats.totalComisiones/stats.totalVentas:0)} sobre ventas</div></div>
     </div>
+    ${stats.publiTotal>0?`<div class="metrics-grid">
+      <div class="metric" style="border-top-color:var(--green)"><div class="metric-label">ROAS</div><div class="metric-value" style="color:var(--green-text)">${stats.roas?stats.roas.toFixed(2)+"x":"—"}</div><div class="metric-sub">$${stats.roas?stats.roas.toFixed(2):"0"} de ventas por $1 de publi</div></div>
+      <div class="metric" style="border-top-color:${stats.trueRoas>0?"var(--green)":"var(--red)"}"><div class="metric-label">TRUE ROAS <span style="font-size:10px;color:var(--text3)">(ganancia)</span></div><div class="metric-value" style="color:${stats.trueRoas>0?"var(--green-text)":"var(--red-text)"}">${stats.trueRoas!==null?stats.trueRoas.toFixed(2)+"x":"—"}</div><div class="metric-sub">$${stats.trueRoas!==null?stats.trueRoas.toFixed(2):"0"} de ganancia neta por $1 de publi</div></div>
+      <div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">ACOS <span style="font-size:10px;color:var(--text3)">(MeLi)</span></div><div class="metric-value" style="color:var(--purple-text)">${S.publiAcos?S.publiAcos.toFixed(1)+"%":"—"}</div><div class="metric-sub">publi ÷ ventas atribuidas · ROAS ${stats.roasAds?stats.roasAds.toFixed(2)+"x":"—"}</div></div>
+      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">TACOS</div><div class="metric-value" style="color:var(--yellow-text)">${fmtPct(stats.tacos)}</div><div class="metric-sub">publi ÷ ventas totales del período</div></div>
+    </div>`:""}
     <div class="metrics-grid">
       <div class="metric" style="border-top-color:var(--cyan)"><div class="metric-label">Envíos reales</div><div class="metric-value" style="color:var(--cyan-text)">${fmt(stats.totalEnvios)}</div><div class="metric-sub">desde MercadoPago</div></div>
       <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Cuotas (financiación)</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalFinanciacion)}</div><div class="metric-sub">costo cuotas sin interés</div></div>
@@ -609,12 +627,17 @@ function renderDashboard(el){
       </div>
     </div>
     ${S.publiFromAPI&&S.publiCampaigns.length?`<div class="card">
-      <div class="card-title">Gasto en publicidad por campaña · ${fmt(S.publiARS)} total</div>
-      ${S.publiCampaigns.map(c=>`
-        <div class="rank-item">
-          <div class="rank-info"><div class="rank-name">${c.name}</div><div class="rank-units">ACOS ${c.acos.toFixed(1)}% · ventas atribuidas ${fmt(c.ventas)}</div></div>
+      <div class="card-title">Rendimiento por campaña · ${fmt(S.publiARS)} de gasto total</div>
+      ${S.publiCampaigns.map(c=>{
+        const a=campaignAdvice(c);
+        return`<div class="rank-item">
+          <div class="rank-info">
+            <div class="rank-name">${c.name} <span style="font-size:10px;padding:1px 7px;border-radius:10px;background:${a.bg};color:${a.color};font-weight:600">${a.label}</span></div>
+            <div class="rank-units">ROAS ${c.roas.toFixed(2)}x · ACOS ${c.acos.toFixed(1)}%${c.acos_target?" (objetivo "+c.acos_target.toFixed(0)+"%)":""} · ventas ${fmt(c.ventas)}</div>
+          </div>
           <div class="rank-value neg">${fmt(-c.cost)}</div>
-        </div>`).join("")}
+        </div>`}).join("")}
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">💡 Escalar = rinde por debajo del objetivo, podés invertir más · Revisar = ACOS muy por encima del objetivo, se come el margen</div>
     </div>`:""}
     <div class="charts-grid">
       <div class="card"><div class="card-title">Ventas vs Ganancia por día</div><div class="chart-wrap"><canvas id="chartVentas"></canvas></div></div>
