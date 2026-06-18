@@ -170,8 +170,7 @@ const S = {
   token: localStorage.getItem("meli_token"),
   userId: localStorage.getItem("meli_user_id"),
   nickname: localStorage.getItem("meli_nickname"),
-  percepcionesPct: parseFloat(localStorage.getItem("percPct")||"7.01"),
-  iibbPct: parseFloat(localStorage.getItem("iibbPct")||"4"),
+  percepcionesPct: parseFloat(localStorage.getItem("percPct")||"0"),
   publiManual: parseFloat(localStorage.getItem("publiManual")||"0"),
   publiARS: 0,
   publiFromAPI: false,
@@ -190,6 +189,11 @@ const S = {
   darkMode: localStorage.getItem("darkMode")==="true",
   debugOrder: null,
 };
+
+// Migración: los % de impuestos estimados viejos (7.01 percep + 4 iibb) ahora son reales desde MP.
+// Si el usuario tenía los valores por defecto anteriores, los reseteo a 0 para no doble-contar.
+if(localStorage.getItem("percPct")==="7.01"){ S.percepcionesPct=0; localStorage.setItem("percPct","0"); }
+localStorage.removeItem("iibbPct");
 
 applyTheme();
 
@@ -236,23 +240,22 @@ function getProductCost(itemId,title){
 
 function calcOrder(o){
   const precio = o.total_amount||0;
-  // commission = sale_fee real de MeLi (incluye comisión + envío MeLi + IIBB retención + cuotas)
-  const comision = o.commission||0;
-  // envío = costo adicional SEPARADO de sale_fee (0 para Mercado Envíos Full/gratis)
-  const envio = o.shipping_cost||0;
-  // IIBB ya está incluido en sale_fee (comisión MeLi bundlea comisión + envío + IIBB + cuotas)
-  // No se suma por separado para no doble-contar
-  const iibb = 0;
+  // Todos los valores REALES desde MercadoPago (charges_details)
+  const comision = o.commission||0;       // meli_percentage_fee (comisión MeLi, IVA incluido)
+  const financiacion = o.financing||0;    // financing_add_on_fee (costo cuotas sin interés)
+  const envio = o.shipping_cost||0;        // type shipping (envío real del vendedor)
+  const iibb = o.iibb_real||0;             // type tax (IIBB/retenciones, varía por venta)
+  // Percepciones manuales: adicional opcional (IVA percepción u otros que no vienen en MP)
   const percepciones = precio*(S.percepcionesPct/100);
   const publiTotal = S.publiFromAPI?S.publiARS:S.publiManual;
   const totalOrds = S.orders.length||1;
   const publiProrr = publiTotal/totalOrds;
   const item = o.items?.[0];
   const costoProducto = item?getProductCost(item.item_id,item.title)*(item.quantity||1):0;
-  const costos = comision+envio+iibb+percepciones+publiProrr+costoProducto;
+  const costos = comision+financiacion+envio+iibb+percepciones+publiProrr+costoProducto;
   const ganancia = precio-costos;
   const margen = precio>0?ganancia/precio:0;
-  return {precio,comision,envio,iibb,percepciones,publiProrr,costoProducto,costos,ganancia,margen};
+  return {precio,comision,financiacion,envio,iibb,percepciones,publiProrr,costoProducto,costos,ganancia,margen};
 }
 
 async function apiFn(name,params){
@@ -385,6 +388,7 @@ function getStats(){
   const totalVentas=calcs.reduce((s,o)=>s+o.precio,0);
   const totalGanancia=calcs.reduce((s,o)=>s+o.ganancia,0);
   const totalComisiones=calcs.reduce((s,o)=>s+o.comision,0);
+  const totalFinanciacion=calcs.reduce((s,o)=>s+(o.financiacion||0),0);
   const totalEnvios=calcs.reduce((s,o)=>s+o.envio,0);
   const totalIIBB=calcs.reduce((s,o)=>s+o.iibb,0);
   const totalPercepciones=calcs.reduce((s,o)=>s+o.percepciones,0);
@@ -394,7 +398,7 @@ function getStats(){
   const margen=totalVentas>0?totalGanancia/totalVentas:0;
   const tacos=totalVentas>0&&publiTotal>0?publiTotal/totalVentas:0;
   const trueRoas=publiTotal>0?totalGanancia/publiTotal:null;
-  return{calcs,totalVentas,totalGanancia,totalComisiones,totalEnvios,totalIIBB,totalPercepciones,totalCostoProducto,totalCostos,margen,tacos,trueRoas,publiTotal,count:calcs.length};
+  return{calcs,totalVentas,totalGanancia,totalComisiones,totalFinanciacion,totalEnvios,totalIIBB,totalPercepciones,totalCostoProducto,totalCostos,margen,tacos,trueRoas,publiTotal,count:calcs.length};
 }
 
 function getByProduct(calcs){
@@ -470,8 +474,7 @@ function periodBar(){
 function configBar(){
   return `<div class="config-row">
     <span class="config-label-main">⚙ Config</span>
-    <div class="config-field"><label>Percepciones</label><input class="config-input" type="number" value="${S.percepcionesPct}" step="0.1" onchange="S.percepcionesPct=parseFloat(this.value)||7.01;localStorage.setItem('percPct',S.percepcionesPct);if(S.orders.length)renderContent()"><span class="config-suffix">%</span></div>
-    <div class="config-field"><label>IIBB ret.</label><input class="config-input" type="number" value="${S.iibbPct}" step="0.1" onchange="S.iibbPct=parseFloat(this.value)||4;localStorage.setItem('iibbPct',S.iibbPct);if(S.orders.length)renderContent()"><span class="config-suffix">%</span></div>
+    <div class="config-field"><label title="Impuestos adicionales que no aparecen por venta en MercadoPago (ej. percepción IVA o IIBB sobre transferencias). El IIBB por venta ya se trackea solo.">Percep. extra</label><input class="config-input" type="number" value="${S.percepcionesPct}" step="0.1" onchange="S.percepcionesPct=parseFloat(this.value)||0;localStorage.setItem('percPct',S.percepcionesPct);if(S.orders.length)renderContent()"><span class="config-suffix">%</span></div>
     ${S.publiFromAPI
       ?`<div class="publi-pill">✓ Publicidad MeLi: ${fmt(S.publiARS)}</div>`
       :`<div class="config-field"><label>Publicidad manual</label><input class="config-input" style="color:var(--purple)" type="number" value="${S.publiManual}" step="100" onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()"><span class="config-suffix">$</span></div>`}
@@ -561,8 +564,9 @@ function renderDashboard(el){
       <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Comisiones MeLi</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalComisiones)}</div><div class="metric-sub">${fmtPct(stats.totalVentas>0?stats.totalComisiones/stats.totalVentas:0)} sobre ventas</div></div>
     </div>
     <div class="metrics-grid">
-      <div class="metric" style="border-top-color:var(--cyan)"><div class="metric-label">Envíos reales</div><div class="metric-value" style="color:var(--cyan-text)">${fmt(stats.totalEnvios)}</div></div>
-      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">IIBB + Percepciones</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(stats.totalIIBB+stats.totalPercepciones)}</div><div class="metric-sub">${S.iibbPct}% + ${S.percepcionesPct}%</div></div>
+      <div class="metric" style="border-top-color:var(--cyan)"><div class="metric-label">Envíos reales</div><div class="metric-value" style="color:var(--cyan-text)">${fmt(stats.totalEnvios)}</div><div class="metric-sub">desde MercadoPago</div></div>
+      <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Cuotas (financiación)</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalFinanciacion)}</div><div class="metric-sub">costo cuotas sin interés</div></div>
+      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">IIBB${stats.totalPercepciones>0?" + Percep.":""}</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(stats.totalIIBB+stats.totalPercepciones)}</div><div class="metric-sub">${stats.totalIIBB>0?"real por venta":""}${stats.totalPercepciones>0?" + "+S.percepcionesPct+"% manual":""}</div></div>
       <div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">Costo productos</div><div class="metric-value" style="color:var(--purple-text)">${fmt(stats.totalCostoProducto)}</div><div class="metric-sub">${stats.totalCostoProducto===0?"Cargá costos en Productos":""}</div></div>
       <div class="metric" style="border-top-color:var(--purple)">
         <div class="metric-label">Publicidad</div>
@@ -615,7 +619,7 @@ function renderOrders(el){
       <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span></div>
       <table>
         <thead><tr>
-          <th>Producto</th><th>Fecha</th><th class="r">Precio</th><th class="r">Costo prod.</th><th class="r">Comisión</th><th class="r">Envío</th><th class="r">IIBB</th><th class="r">Percep.</th><th class="r">Ganancia</th><th class="r">Margen</th><th>Estado</th>
+          <th>Producto</th><th>Fecha</th><th class="r">Precio</th><th class="r">Costo prod.</th><th class="r">Comisión</th><th class="r">Cuotas</th><th class="r">Envío</th><th class="r">IIBB</th><th class="r">Ganancia</th><th class="r">Margen</th><th>Estado</th>
         </tr></thead>
         <tbody>
           ${pageOrders.map(o=>{
@@ -624,14 +628,14 @@ function renderOrders(el){
             const sc=o.status==="paid"?"paid":o.status==="cancelled"?"cancelled":"pending";
             const sl=o.status==="paid"?"Pagada":o.status==="cancelled"?"Cancelada":"Pendiente";
             return`<tr>
-              <td class="text" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}</td>
+              <td class="text" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}${o.breakdown_ok===false?' <span style="color:var(--orange)" title="Sin desglose real de MP">⚠</span>':''}</td>
               <td class="neutral">${fecha}</td>
               <td class="r">${fmt(o.precio)}</td>
               <td class="r ${o.costoProducto>0?"neg":"neutral"}">${o.costoProducto>0?fmt(-o.costoProducto):"—"}</td>
               <td class="r neg">${fmt(-o.comision)}<small style="display:block;color:var(--text3);font-size:10px">${o.precio>0?((o.comision/o.precio)*100).toFixed(1)+"%":""}</small></td>
+              <td class="r ${o.financiacion>0?"neg":"neutral"}">${o.financiacion>0?fmt(-o.financiacion):"—"}<small style="display:block;color:var(--text3);font-size:10px">${o.financiacion>0?o.installments+" cuotas":""}</small></td>
               <td class="r ${o.envio>0?"neg":"neutral"}">${o.envio>0?fmt(-o.envio):"—"}</td>
-              <td class="r neg">${fmt(-o.iibb)}<small style="display:block;color:var(--text3);font-size:10px">${o.iibb_real>0?"real":S.iibbPct+"%"}</small></td>
-              <td class="r neg">${fmt(-o.percepciones)}</td>
+              <td class="r ${o.iibb>0?"neg":"neutral"}">${o.iibb>0?fmt(-o.iibb):"—"}</td>
               <td class="r ${o.ganancia>=0?"pos":"neg"}">${fmt(o.ganancia)}</td>
               <td class="r ${o.margen>=0?"pos":"neg"}">${fmtPct(o.margen)}</td>
               <td><span class="tag ${sc}">${sl}</span></td>
@@ -720,9 +724,9 @@ function nextPage(){S.offset+=PAGE_SIZE;renderContent();}
 function exportCSV(){
   if(!S.orders.length) return;
   const stats=getStats();
-  const rows=[["Producto","Fecha","Precio","Costo Producto","Comision MeLi","Envio","IIBB","Percepciones","Publicidad","Ganancia","Margen %","Estado"]];
+  const rows=[["Producto","Fecha","Precio","Costo Producto","Comision MeLi","Cuotas","Envio","IIBB","Percep. extra","Publicidad","Neto recibido","Ganancia","Margen %","Estado"]];
   stats.calcs.forEach(o=>{
-    rows.push([o.items?.[0]?.title||"",(o.date||"").split("T")[0],o.precio,o.costoProducto.toFixed(2),o.comision.toFixed(2),o.envio.toFixed(2),o.iibb.toFixed(2),o.percepciones.toFixed(2),o.publiProrr.toFixed(2),o.ganancia.toFixed(2),(o.margen*100).toFixed(1)+"%",o.status]);
+    rows.push([o.items?.[0]?.title||"",(o.date||"").split("T")[0],o.precio,o.costoProducto.toFixed(2),o.comision.toFixed(2),(o.financiacion||0).toFixed(2),o.envio.toFixed(2),o.iibb.toFixed(2),o.percepciones.toFixed(2),o.publiProrr.toFixed(2),(o.net_received||0).toFixed(2),o.ganancia.toFixed(2),(o.margen*100).toFixed(1)+"%",o.status]);
   });
   const csv=rows.map(r=>r.map(v=>`"${v}"`).join(",")).join("\n");
   const a=document.createElement("a");
