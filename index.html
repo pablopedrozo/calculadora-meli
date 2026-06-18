@@ -301,11 +301,15 @@ function calcOrder(o){
   return {precio,comision,financiacion,envio,iibb,percepciones,publiProrr,costoProducto,costos,ganancia,margen};
 }
 
-async function apiFn(name,params){
+async function apiFn(name,params,timeout=35000){
   const qs = new URLSearchParams(params).toString();
-  const r = await fetch(`/.netlify/functions/${name}?${qs}`);
-  if(!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), timeout); // no quedarse colgado si la función tarda en despertar
+  try{
+    const r = await fetch(`/.netlify/functions/${name}?${qs}`,{signal:ctrl.signal});
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } finally { clearTimeout(t); }
 }
 
 function saveSession(res){
@@ -323,15 +327,16 @@ function saveSession(res){
 async function ensureToken(){
   if(!S.token||!S.refreshToken) return;
   if(Date.now() < S.tokenExp - 5*60*1000) return; // todavía válido
-  try{
-    const res = await apiFn("refresh",{refresh_token:S.refreshToken});
-    if(res.access_token){
-      saveSession(res); // guarda el nuevo access + el refresh rotado + nueva expiración
-    }else{
-      // refresh_token vencido/revocado → forzar re-login
-      doLogout();
-    }
-  }catch(e){ /* si falla la red, seguimos con el token actual */ }
+  for(let i=0;i<3;i++){
+    try{
+      const res = await apiFn("refresh",{refresh_token:S.refreshToken});
+      if(res && res.access_token){ saveSession(res); return; } // ok
+      if(res && /invalid_grant/.test(res.error||"")){ doLogout(); return; } // refresh vencido de verdad → re-login
+    }catch(e){ /* red caída / función despertando → reintentar */ }
+    await new Promise(r=>setTimeout(r, 900*(i+1)));
+  }
+  // No se pudo refrescar tras varios intentos: NO deslogueamos (puede ser red).
+  // Seguimos con el token actual; si está vencido, la carga mostrará el error con botón Cargar.
 }
 
 async function handleCallback(){
@@ -393,12 +398,15 @@ async function loadAllItems(){
   if(S.page==="products") renderContent();
 }
 
-// Trae una página de órdenes con reintento (no rompe toda la carga si una falla)
+// Trae una página de órdenes con reintentos y backoff (no rompe la carga si una falla)
 async function fetchOrdersPage(offset,tries=2){
   for(let t=0;t<tries;t++){
     try{
       return await apiFn("orders",{token:S.token,user_id:S.userId,from:S.dateFrom,to:S.dateTo,offset});
-    }catch(e){ if(t===tries-1) return null; }
+    }catch(e){
+      if(t===tries-1) return null;
+      await new Promise(r=>setTimeout(r, 700*(t+1))); // esperar antes de reintentar
+    }
   }
   return null;
 }
@@ -411,9 +419,10 @@ async function loadAllOrders(){
   renderContent(); // spinner inicial sólo hasta la primera tanda
   const advPromise = loadAdvertising(); // en paralelo, no bloquea el render de ventas
   try{
-    // Primera página = ventas más recientes (orders/search viene date_desc)
-    const first = await fetchOrdersPage(0);
-    if(!first) throw new Error("No se pudo conectar con MeLi");
+    // Primera página = ventas más recientes (orders/search viene date_desc).
+    // 5 reintentos con backoff: cubre el arranque en frío (la función tarda en despertar).
+    const first = await fetchOrdersPage(0, 5);
+    if(!first) throw new Error("No se pudo conectar con MeLi. Tocá “Cargar” para reintentar.");
     let allOrders = first.results||[];
     S.total = first.paging?.total || allOrders.length;
     const cap = Math.min(S.total, 1500);
@@ -807,7 +816,7 @@ function renderDashboard(el){
     ${configBar()}${periodBar()}
     ${loadingMoreBanner()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
-    ${!stats?`<div class="empty">Seleccioná un período y hacé clic en Cargar.</div>`:`
+    ${!stats?`<div class="empty">${S.error?"No se pudieron cargar las ventas.":"No hay ventas para mostrar en este período."}<br><button class="btn-primary" style="margin-top:14px" onclick="loadAllOrders()">${S.error?"↻ Reintentar":"Cargar ventas"}</button></div>`:`
     ${dashGridHtml(stats)}
     ${stats.gastosTotalPeriodo>0?`<details class="card cm-card">
       <summary>
@@ -1119,13 +1128,13 @@ function exportCSV(){
 }
 
 async function render(){
-  await handleCallback();
-  if(S.token){
-    await ensureToken();            // renueva la sesión si está por vencer (sin re-login)
-    if(S.token){renderShell();renderContent();loadAllOrders();}
-    else renderAuth();
-  }
-  else renderAuth();
+  try{ await handleCallback(); }catch(e){}
+  if(!S.token){ renderAuth(); return; }
+  try{ await ensureToken(); }catch(e){}   // nunca debe romper el arranque
+  if(!S.token){ renderAuth(); return; }   // sólo si el refresh confirmó sesión inválida
+  renderShell();
+  renderContent();
+  loadAllOrders();                        // se dispara siempre que haya sesión
 }
 render();
 </script>
