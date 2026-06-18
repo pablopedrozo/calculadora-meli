@@ -207,7 +207,7 @@ const S = {
   error: null,
   page: "dashboard",
   period: "30d",
-  dateFrom: daysAgo(30),
+  dateFrom: daysAgo(29),
   dateTo: today(),
   chartInstance: null,
   rankChartInstance: null,
@@ -437,11 +437,12 @@ function copyDiag(){
 
 function setPeriod(p){
   S.period=p;
+  // N días incluyen hoy: "últimos 7 días" = hoy + 6 anteriores = 7 días exactos
   if(p==="today"){S.dateFrom=today();S.dateTo=today();}
   else if(p==="yesterday"){S.dateFrom=yesterday();S.dateTo=yesterday();}
-  else if(p==="7d"){S.dateFrom=daysAgo(7);S.dateTo=today();}
-  else if(p==="15d"){S.dateFrom=daysAgo(15);S.dateTo=today();}
-  else if(p==="30d"){S.dateFrom=daysAgo(30);S.dateTo=today();}
+  else if(p==="7d"){S.dateFrom=daysAgo(6);S.dateTo=today();}
+  else if(p==="15d"){S.dateFrom=daysAgo(14);S.dateTo=today();}
+  else if(p==="30d"){S.dateFrom=daysAgo(29);S.dateTo=today();}
   document.querySelectorAll(".period-btn").forEach(b=>b.classList.toggle("active",b.dataset.p===p));
   if(p!=="custom") loadAllOrders();
 }
