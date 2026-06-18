@@ -74,6 +74,12 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .page-sub{font-size:13px;color:var(--text3);margin-top:3px}
 /* Cards */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;box-shadow:var(--card-shadow);transition:background .2s,border-color .2s}
+.draggable-metric{cursor:grab;transition:opacity .15s,outline .15s}
+.draggable-metric:active{cursor:grabbing}
+.draggable-metric.dragging{opacity:.35}
+.draggable-metric.drag-over{outline:2px dashed var(--accent);outline-offset:2px}
+.dash-hint{font-size:11px;color:var(--text3);margin:0 0 10px;display:flex;align-items:center;gap:10px}
+.dash-hint button{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:11px;padding:3px 8px;cursor:pointer}
 .cm-card{margin-bottom:16px;border-left:3px solid var(--green)}
 .cm-card>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .cm-card>summary::-webkit-details-marker{display:none}
@@ -222,6 +228,7 @@ const S = {
   productCosts: loadCosts(),
   expenses: loadExpenses(),
   darkMode: localStorage.getItem("darkMode")==="true",
+  dashOrder: (()=>{try{return JSON.parse(localStorage.getItem("dash_order")||"[]");}catch(e){return[];}})(),
   debugOrder: null,
 };
 
@@ -719,6 +726,64 @@ function loadingMsg(base){
   return `<div class="loading-wrap"><div class="spinner"></div>${base}${p}</div>`;
 }
 
+// Tarjetas (widgets) del dashboard — orden personalizable arrastrando
+function dashWidgets(stats){
+  const W=[];
+  const m=(id,base,label,value,sub)=>W.push({id,color:`var(--${base})`,label,value:`<span style="color:var(--${base}-text)">${value}</span>`,sub});
+  m("ventas","accent","Ventas brutas",fmt(stats.totalVentas),`${stats.count} órdenes${S.total>stats.count?" · "+S.total+" total":""}`);
+  m("profit","green","Profit",fmt(stats.totalGanancia),`Margen ${fmtPct(stats.margen)}`);
+  m("costos","red","Total costos",fmt(stats.totalCostos),"Todos los descuentos");
+  m("comisiones","orange","Comisiones MeLi",fmt(stats.totalComisiones),`${fmtPct(stats.totalVentas>0?stats.totalComisiones/stats.totalVentas:0)} sobre ventas`);
+  if(stats.publiTotal>0){
+    m("roas","green","ROAS",stats.roas?stats.roas.toFixed(2)+"x":"—",`$${stats.roas?stats.roas.toFixed(2):"0"} de ventas por $1 de publi`);
+    W.push({id:"trueroas",color:stats.trueRoas>0?"var(--green)":"var(--red)",label:'TRUE ROAS <span style="font-size:10px;color:var(--text3)">(profit)</span>',value:`<span style="color:${stats.trueRoas>0?"var(--green-text)":"var(--red-text)"}">${stats.trueRoas!==null?stats.trueRoas.toFixed(2)+"x":"—"}</span>`,sub:`$${stats.trueRoas!==null?stats.trueRoas.toFixed(2):"0"} de profit por $1 de publi`});
+    m("acos","purple",'ACOS <span style="font-size:10px;color:var(--text3)">(MeLi)</span>',S.publiAcos?S.publiAcos.toFixed(1)+"%":"—",`publi ÷ ventas atribuidas · ROAS ${stats.roasAds?stats.roasAds.toFixed(2)+"x":"—"}`);
+    m("tacos","yellow","TACOS",fmtPct(stats.tacos),"publi ÷ ventas totales del período");
+  }
+  m("envios","cyan","Envíos reales",fmt(stats.totalEnvios),"desde MercadoPago");
+  m("cuotas","orange","Cuotas (financiación)",fmt(stats.totalFinanciacion),"costo cuotas sin interés");
+  m("iibb","yellow","IIBB"+(stats.totalPercepciones>0?" + Percep.":""),fmt(stats.totalIIBB+stats.totalPercepciones),stats.totalIIBB>0?"real por venta":"");
+  m("costoproducto","purple","Costo productos",fmt(stats.totalCostoProducto),stats.totalCostoProducto===0?"Cargá costos en Productos":"");
+  W.push({id:"publicidad",color:"var(--purple)",label:`Publicidad ${S.publiFromAPI?'<span style="color:var(--green-text);font-size:10px">● auto MeLi</span>':""}`,
+    value: S.publiFromAPI
+      ? `<span style="color:var(--purple-text)">${fmt(S.publiARS)}</span>`
+      : `<input id="publi-input" draggable="false" type="number" value="${S.publiManual||0}" step="100" style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0" onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()">`,
+    sub: S.publiFromAPI?`ACOS ${S.publiAcos.toFixed(1)}% · ${S.publiCampaigns.length} camp. activas`:"$ — no se auto-cargó, editá acá"});
+  return W;
+}
+function dashGridHtml(stats){
+  const widgets=dashWidgets(stats);
+  const byId={}; widgets.forEach(w=>byId[w.id]=w);
+  // Agregar widgets nuevos al final del orden guardado
+  widgets.forEach(w=>{ if(!S.dashOrder.includes(w.id)) S.dashOrder.push(w.id); });
+  localStorage.setItem("dash_order",JSON.stringify(S.dashOrder));
+  const ids=S.dashOrder.filter(id=>byId[id]);
+  const cards=ids.map(id=>{
+    const w=byId[id];
+    return `<div class="metric draggable-metric" draggable="true" data-wid="${id}" style="border-top-color:${w.color}"
+      ondragstart="dashDragStart(event,'${id}')" ondragend="dashDragEnd(event)"
+      ondragover="dashDragOver(event,this)" ondragleave="this.classList.remove('drag-over')" ondrop="dashDrop(event,'${id}')">
+      <div class="metric-label">${w.label}</div><div class="metric-value">${w.value}</div>${w.sub?`<div class="metric-sub">${w.sub}</div>`:""}</div>`;
+  }).join("");
+  return `<div class="dash-hint">⠿ Arrastrá las tarjetas para reordenar tu dashboard <button onclick="resetDashOrder()">↺ Restablecer</button></div>
+    <div class="metrics-grid" ondragover="dashDragOver(event)" ondrop="dashDropEnd(event)">${cards}</div>`;
+}
+let _dragWid=null;
+function dashDragStart(ev,id){ _dragWid=id; ev.dataTransfer.effectAllowed="move"; ev.currentTarget.classList.add("dragging"); }
+function dashDragEnd(ev){ _dragWid=null; document.querySelectorAll(".draggable-metric").forEach(e=>e.classList.remove("dragging","drag-over")); }
+function dashDragOver(ev,el){ ev.preventDefault(); ev.dataTransfer.dropEffect="move"; if(el) el.classList.add("drag-over"); }
+function reorderDash(targetId){
+  const drag=_dragWid; _dragWid=null;
+  if(!drag||drag===targetId) return;
+  let o=S.dashOrder.filter(x=>x!==drag);
+  const idx=targetId?o.indexOf(targetId):o.length;
+  o.splice(idx<0?o.length:idx,0,drag);
+  S.dashOrder=o; localStorage.setItem("dash_order",JSON.stringify(o)); renderContent();
+}
+function dashDrop(ev,targetId){ ev.preventDefault(); ev.stopPropagation(); reorderDash(targetId); }
+function dashDropEnd(ev){ ev.preventDefault(); reorderDash(null); }
+function resetDashOrder(){ S.dashOrder=[]; localStorage.removeItem("dash_order"); renderContent(); }
+
 function renderDashboard(el){
   if(S.loading){el.innerHTML=loadingMsg("Cargando ventas...");return;}
   const stats=S.orders.length?getStats():null;
@@ -730,54 +795,24 @@ function renderDashboard(el){
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
     ${!stats?`<div class="empty">Seleccioná un período y hacé clic en Cargar.</div>`:`
-    <div class="metrics-grid">
-      <div class="metric" style="border-top-color:var(--accent)"><div class="metric-label">Ventas brutas</div><div class="metric-value" style="color:var(--accent-text)">${fmt(stats.totalVentas)}</div><div class="metric-sub">${stats.count} órdenes${S.total>stats.count?" · "+S.total+" total":""}</div></div>
-      <div class="metric" style="border-top-color:var(--green)"><div class="metric-label">Ganancia neta</div><div class="metric-value" style="color:var(--green-text)">${fmt(stats.totalGanancia)}</div><div class="metric-sub">Margen ${fmtPct(stats.margen)}</div></div>
-      <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Total costos</div><div class="metric-value" style="color:var(--red-text)">${fmt(stats.totalCostos)}</div><div class="metric-sub">Todos los descuentos</div></div>
-      <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Comisiones MeLi</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalComisiones)}</div><div class="metric-sub">${fmtPct(stats.totalVentas>0?stats.totalComisiones/stats.totalVentas:0)} sobre ventas</div></div>
-    </div>
+    ${dashGridHtml(stats)}
     ${stats.gastosTotalPeriodo>0?`<details class="card cm-card">
       <summary>
         <div>
-          <div class="metric-label">📊 Contribución marginal <span style="font-size:10px;color:var(--text3)">(ganancia − gastos)</span></div>
+          <div class="metric-label">📊 Ganancia neta <span style="font-size:10px;color:var(--text3)">(profit − gastos)</span></div>
           <div style="font-size:24px;font-weight:700;color:${stats.contribMarginal>=0?"var(--green-text)":"var(--red-text)"}">${fmt(stats.contribMarginal)}</div>
         </div>
         <span class="cm-toggle" style="font-size:11px;color:var(--text3);white-space:nowrap">ver desglose ▾</span>
       </summary>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
-        <div><div class="metric-label">Ganancia neta</div><div style="font-weight:700;font-size:16px">${fmt(stats.totalGanancia)}</div></div>
+        <div><div class="metric-label">Profit</div><div style="font-weight:700;font-size:16px">${fmt(stats.totalGanancia)}</div></div>
         ${stats.gastosFijosPeriodo>0?`<div><div class="metric-label">− Gastos fijos</div><div style="font-weight:700;font-size:16px;color:var(--red-text)">${fmt(-stats.gastosFijosPeriodo)}</div><div class="metric-sub">${fmt(stats.gastosFijosDiario)}/día</div></div>`:""}
         ${stats.gastosVarPeriodo>0?`<div><div class="metric-label">− Gastos variables</div><div style="font-weight:700;font-size:16px;color:var(--red-text)">${fmt(-stats.gastosVarPeriodo)}</div><div class="metric-sub">${fmt(stats.gastosVarDiario)}/día</div></div>`:""}
         <div><div class="metric-label">Margen real</div><div style="font-weight:700;font-size:16px;color:${stats.margenCM>=0?"var(--green-text)":"var(--red-text)"}">${fmtPct(stats.margenCM)}</div><div class="metric-sub">vs ${fmtPct(stats.margen)} sin gastos</div></div>
         ${stats.publiTotal>0?`<div><div class="metric-label">TRUE ROAS real</div><div style="font-weight:700;font-size:16px;color:${stats.trueRoasCM>0?"var(--green-text)":"var(--red-text)"}">${stats.trueRoasCM!==null?stats.trueRoasCM.toFixed(2)+"x":"—"}</div><div class="metric-sub">vs ${stats.trueRoas!==null?stats.trueRoas.toFixed(2)+"x":"—"} sin gastos</div></div>`:""}
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:12px">💡 Esta métrica incluye los costos fijos. El resto del dashboard NO se ve afectado por ellos.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:12px">💡 Esta métrica incluye los gastos fijos y variables. El "Profit" y el resto del dashboard NO se ven afectados por ellos.</div>
     </details>`:""}
-    ${stats.publiTotal>0?`<div class="metrics-grid">
-      <div class="metric" style="border-top-color:var(--green)"><div class="metric-label">ROAS</div><div class="metric-value" style="color:var(--green-text)">${stats.roas?stats.roas.toFixed(2)+"x":"—"}</div><div class="metric-sub">$${stats.roas?stats.roas.toFixed(2):"0"} de ventas por $1 de publi</div></div>
-      <div class="metric" style="border-top-color:${stats.trueRoas>0?"var(--green)":"var(--red)"}"><div class="metric-label">TRUE ROAS <span style="font-size:10px;color:var(--text3)">(ganancia)</span></div><div class="metric-value" style="color:${stats.trueRoas>0?"var(--green-text)":"var(--red-text)"}">${stats.trueRoas!==null?stats.trueRoas.toFixed(2)+"x":"—"}</div><div class="metric-sub">$${stats.trueRoas!==null?stats.trueRoas.toFixed(2):"0"} de ganancia neta por $1 de publi</div></div>
-      <div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">ACOS <span style="font-size:10px;color:var(--text3)">(MeLi)</span></div><div class="metric-value" style="color:var(--purple-text)">${S.publiAcos?S.publiAcos.toFixed(1)+"%":"—"}</div><div class="metric-sub">publi ÷ ventas atribuidas · ROAS ${stats.roasAds?stats.roasAds.toFixed(2)+"x":"—"}</div></div>
-      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">TACOS</div><div class="metric-value" style="color:var(--yellow-text)">${fmtPct(stats.tacos)}</div><div class="metric-sub">publi ÷ ventas totales del período</div></div>
-    </div>`:""}
-    <div class="metrics-grid">
-      <div class="metric" style="border-top-color:var(--cyan)"><div class="metric-label">Envíos reales</div><div class="metric-value" style="color:var(--cyan-text)">${fmt(stats.totalEnvios)}</div><div class="metric-sub">desde MercadoPago</div></div>
-      <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Cuotas (financiación)</div><div class="metric-value" style="color:var(--orange-text)">${fmt(stats.totalFinanciacion)}</div><div class="metric-sub">costo cuotas sin interés</div></div>
-      <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">IIBB${stats.totalPercepciones>0?" + Percep.":""}</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(stats.totalIIBB+stats.totalPercepciones)}</div><div class="metric-sub">${stats.totalIIBB>0?"real por venta":""}${stats.totalPercepciones>0?" + "+S.percepcionesPct+"% manual":""}</div></div>
-      <div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">Costo productos</div><div class="metric-value" style="color:var(--purple-text)">${fmt(stats.totalCostoProducto)}</div><div class="metric-sub">${stats.totalCostoProducto===0?"Cargá costos en Productos":""}</div></div>
-      <div class="metric" style="border-top-color:var(--purple)">
-        <div class="metric-label">Publicidad ${S.publiFromAPI?'<span style="color:var(--green-text);font-size:10px">● auto MeLi</span>':""}</div>
-        ${S.publiFromAPI
-          ?`<div class="metric-value" style="color:var(--purple-text)">${fmt(S.publiARS)}</div>
-            <div class="metric-sub">ACOS ${S.publiAcos.toFixed(1)}% · ${S.publiCampaigns.length} camp. activas</div>`
-          :`<div class="metric-value" style="color:var(--purple-text)">
-              <input id="publi-input" type="number" value="${S.publiManual||0}" step="100"
-                style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0"
-                onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()"
-                title="Ingresá el gasto en publicidad del período">
-            </div>
-            <div class="metric-sub">$ — no se pudo auto-cargar, editá acá</div>`}
-      </div>
-    </div>
     ${S.publiFromAPI&&S.publiCampaigns.length?`<div class="card">
       <div class="card-title">Rendimiento por campaña · ${fmt(S.publiARS)} de gasto total</div>
       ${S.publiCampaigns.map(c=>{
@@ -982,13 +1017,13 @@ function renderExpenses(el){
   const stats=S.orders.length?getStats():null;
 
   el.innerHTML=`
-    <div class="page-header"><div><div class="page-title">Gastos</div><div class="page-sub">Costos fijos y variables · se prorratean por día y se descuentan en Contribución Marginal</div></div></div>
+    <div class="page-header"><div><div class="page-title">Gastos</div><div class="page-sub">Costos fijos y variables · se prorratean por día y se descuentan en Ganancia neta</div></div></div>
     ${periodBar()}
     <div class="metrics-grid">
       <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Fijos /día</div><div class="metric-value" style="color:var(--red-text)">${fmt(fijoDia)}</div><div class="metric-sub">${fmt(fijoPer)} en el período</div></div>
       <div class="metric" style="border-top-color:var(--orange)"><div class="metric-label">Variables /día</div><div class="metric-value" style="color:var(--orange-text)">${fmt(varDia)}</div><div class="metric-sub">${fmt(varPer)} en el período</div></div>
       <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">Total período (${dias} día${dias===1?"":"s"})</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(totalPer)}</div><div class="metric-sub">${fmt(totalDia)}/día</div></div>
-      <div class="metric" style="border-top-color:${stats?(stats.contribMarginal>=0?"var(--green)":"var(--red)"):"var(--border2)"}"><div class="metric-label">Contribución marginal</div><div class="metric-value" style="color:${stats?(stats.contribMarginal>=0?"var(--green-text)":"var(--red-text)"):"var(--text3)"}">${stats?fmt(stats.contribMarginal):"—"}</div><div class="metric-sub">${stats?"ganancia − gastos del período":"cargá ventas en el Dashboard"}</div></div>
+      <div class="metric" style="border-top-color:${stats?(stats.contribMarginal>=0?"var(--green)":"var(--red)"):"var(--border2)"}"><div class="metric-label">Ganancia neta</div><div class="metric-value" style="color:${stats?(stats.contribMarginal>=0?"var(--green-text)":"var(--red-text)"):"var(--text3)"}">${stats?fmt(stats.contribMarginal):"—"}</div><div class="metric-sub">${stats?"profit − gastos del período":"cargá ventas en el Dashboard"}</div></div>
     </div>
     <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <span>💡 Elegí el <b>tipo</b> (fijo o variable), el <b>monto</b>, <b>desde cuándo</b> y <b>cada cuánto</b> (7/15/30 días o custom). Se reparte por día y se renueva solo. Apagá el toggle para pausarlo.</span>
