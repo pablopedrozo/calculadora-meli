@@ -19,16 +19,6 @@ function apiGet(path, token) {
   });
 }
 
-async function getShipmentCost(shipmentId, token) {
-  try {
-    const d = await apiGet(`/shipments/${shipmentId}`, token);
-    // option_cost = lo que paga el vendedor realmente (0 si está incluido en sale_fee)
-    // base_cost = precio de lista, NO lo que paga el vendedor
-    const cost = d.shipping_option?.cost ?? d.shipping_option?.list_cost ?? 0;
-    return cost;
-  } catch (e) { return 0; }
-}
-
 exports.handler = async (event) => {
   const { token, user_id, from, to, offset = "0" } = event.queryStringParameters || {};
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
@@ -38,59 +28,25 @@ exports.handler = async (event) => {
     const data = await apiGet(path, token);
     const orders = data.results || [];
 
-    const enriched = await Promise.all(orders.map(async (order, idx) => {
+    const enriched = orders.map((order) => {
       const items = order.order_items || [];
       const payment = order.payments?.[0];
-      const shipmentId = order.shipping?.id;
 
-      // sale_fee = total de lo que cobra MeLi (comisión + envío + IIBB + cuotas, todo bundleado)
-      // Es el campo más confiable disponible para esta cuenta
-      const sale_fee_total = items.reduce((s, i) => s + Math.abs(i.sale_fee || 0), 0);
-
-      // Shipping: option_cost es lo que paga el vendedor por envío SEPARADO de sale_fee
-      // Si es 0 = el envío ya está incluido en sale_fee (no se suma dos veces)
-      const shipping_cost = shipmentId ? await getShipmentCost(shipmentId, token) : 0;
-
-      // Datos de pago disponibles directamente en la orden (sin llamar /payments/{id})
-      const transaction_amount = payment?.transaction_amount || order.total_amount || 0;
-      const net_received = payment?.net_received_amount || 0;
-      const installments = payment?.installments || 1;
-
-      // Debug solo para la primera orden
-      // Campos del pago disponibles directamente en la orden (sin llamar /payments/{id})
-      const pay_shipping = payment?.shipping_cost || 0;      // envío dentro del pago
-      const pay_taxes = payment?.taxes_amount || 0;          // IIBB/impuestos retenidos
-      const pay_total = payment?.total_paid_amount || 0;     // total cobrado al comprador
-      const pay_installment = payment?.installment_amount || 0; // monto por cuota
-
-      // Comisión pura = sale_fee - envío del pago - impuestos del pago
-      const commission_pure = Math.max(0, sale_fee_total - pay_shipping - pay_taxes);
-
-      const debug = idx === 0 ? {
-        sale_fee_total,
-        pay_shipping,
-        pay_taxes,
-        pay_total,
-        pay_installment,
-        shipping_from_shipment: shipping_cost,
-        transaction_amount,
-        net_received,
-        installments,
-      } : undefined;
+      // sale_fee = total real que cobra MeLi por orden (comisión + envío gratis + IIBB + cuotas sin interés)
+      // Es el único campo confiable — MeLi no expone el desglose via API pública para esta cuenta
+      const commission = items.reduce((s, i) => s + Math.abs(i.sale_fee || 0), 0);
 
       return {
         id: order.id,
         date: order.date_created,
         status: order.status,
         total_amount: order.total_amount || 0,
-        commission: commission_pure,
-        shipping_cost: pay_shipping || shipping_cost,
-        iibb_real: pay_taxes,
-        shipment_id: shipmentId || null,
+        commission,
+        shipping_cost: 0, // incluido en commission (sale_fee)
+        shipment_id: order.shipping?.id || null,
         payment_method: payment?.payment_method_id || null,
-        installments,
-        net_received,
-        debug,
+        installments: payment?.installments || 1,
+        iibb_real: 0, // incluido en commission (sale_fee)
         items: items.map(i => ({
           title: i.item?.title || "—",
           item_id: i.item?.id || null,
@@ -99,7 +55,7 @@ exports.handler = async (event) => {
           sale_fee: Math.abs(i.sale_fee || 0),
         })),
       };
-    }));
+    });
 
     return {
       statusCode: 200,

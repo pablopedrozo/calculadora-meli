@@ -240,8 +240,9 @@ function calcOrder(o){
   const comision = o.commission||0;
   // envío = costo adicional SEPARADO de sale_fee (0 para Mercado Envíos Full/gratis)
   const envio = o.shipping_cost||0;
-  // IIBB: usar valor real del pago si está disponible, sino % configurado
-  const iibb = (o.iibb_real && o.iibb_real > 0) ? o.iibb_real : precio*(S.iibbPct/100);
+  // IIBB ya está incluido en sale_fee (comisión MeLi bundlea comisión + envío + IIBB + cuotas)
+  // No se suma por separado para no doble-contar
+  const iibb = 0;
   const percepciones = precio*(S.percepcionesPct/100);
   const publiTotal = S.publiFromAPI?S.publiARS:S.publiManual;
   const totalOrds = S.orders.length||1;
@@ -587,24 +588,6 @@ function renderOrders(el){
     <div class="page-header"><div><div class="page-title">Órdenes</div><div class="page-sub">Detalle completo con costos reales · ${S.orders.length} ventas cargadas</div></div></div>
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
-    ${S.debugOrder?`<div class="card" style="margin:12px 0;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;background:var(--surface2);border:1px solid var(--orange);padding:12px;border-radius:8px">
-<b style="font-size:13px">🔍 DEBUG primera orden — campos de MeLi</b>
-sale_fee (todos los ítems): <b>${S.debugOrder.sale_fee_total?.toFixed(2)}</b>
-commission desde fee_details: <b>${S.debugOrder.commission_from_fee_details?.toFixed(2)}</b>
-marketplace_fee del pago: <b>${S.debugOrder.commission_from_payment_mp_fee?.toFixed(2)}</b>
-marketplace_fee del orden: <b>${S.debugOrder.commission_from_order?.toFixed(2)}</b>
-envío desde fee_details: <b>${S.debugOrder.shipping_from_fee_details?.toFixed(2)}</b>
-shipment base_cost: <b>${S.debugOrder.shipment_base_cost?.toFixed(2)}</b>
-shipment option_cost: <b>${S.debugOrder.shipment_option_cost?.toFixed(2)}</b>
-sale_fee total (todos los costos MeLi): <b>${S.debugOrder.sale_fee_total?.toFixed(2)}</b>
-pay_shipping (envío dentro del pago): <b>${S.debugOrder.pay_shipping?.toFixed(2)}</b>
-pay_taxes (IIBB/impuestos retenidos): <b>${S.debugOrder.pay_taxes?.toFixed(2)}</b>
-pay_total (total cobrado al comprador): <b>${S.debugOrder.pay_total?.toFixed(2)}</b>
-pay_installment (monto por cuota): <b>${S.debugOrder.pay_installment?.toFixed(2)}</b>
-comisión pura (sale_fee - envío - impuestos): <b>${S.debugOrder.sale_fee_total&&(S.debugOrder.sale_fee_total-S.debugOrder.pay_shipping-S.debugOrder.pay_taxes).toFixed(2)}</b>
-transaction_amount: <b>${S.debugOrder.transaction_amount?.toFixed(2)}</b>
-cuotas: <b>${S.debugOrder.installments}</b>
-</div>`:""}
     ${!stats?`<div class="empty">Seleccioná un período y cargá las ventas.</div>`:`
     <div class="table-wrap">
       <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span></div>
