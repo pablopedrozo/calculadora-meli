@@ -19,55 +19,52 @@ function apiGet(path, token) {
   });
 }
 
-// Categorize fee_details from a payment into commission, shipping, iibb, financing
-function parseFeeDetails(fees) {
-  let commission = 0, shipping = 0, iibb = 0, financing = 0;
-  for (const f of fees) {
-    const t = (f.type || "").toLowerCase();
-    const amt = Math.abs(f.amount || 0);
-    if (
-      t.includes("mercadopago_fee") || t.includes("marketplace_fee") ||
-      t.includes("commission") || t === "fee" || t.includes("sale_fee")
-    ) { commission += amt; }
-    else if (t.includes("shipping") || t.includes("envio") || t.includes("flete")) {
-      shipping += amt;
-    } else if (
-      t.includes("iibb") || t.includes("ingresos_brutos") || t.includes("igj") ||
-      t.includes("withhold") || t.includes("retencion") || t.includes("retention") ||
-      t.includes("percep") || t.includes("tax")
-    ) { iibb += amt; }
-    else if (
-      t.includes("financing") || t.includes("cuota") ||
-      t.includes("installment") || t.includes("credit")
-    ) { financing += amt; }
-  }
-  return { commission, shipping, iibb, financing };
-}
-
 async function getPaymentDetails(paymentId, token) {
   try {
     const d = await apiGet(`/payments/${paymentId}`, token);
     const fees = d.fee_details || [];
-    const parsed = parseFeeDetails(fees);
+
+    let commission = 0, shipping = 0, iibb = 0, financing = 0;
+    for (const f of fees) {
+      const t = (f.type || "").toLowerCase();
+      const amt = Math.abs(f.amount || 0);
+      if (t.includes("mercadopago_fee") || t.includes("marketplace") || t.includes("commission") || t === "fee") {
+        commission += amt;
+      } else if (t.includes("shipping") || t.includes("envio") || t.includes("flete") || t.includes("logistic")) {
+        shipping += amt;
+      } else if (t.includes("iibb") || t.includes("ingresos") || t.includes("igj") || t.includes("withhold") || t.includes("retencion") || t.includes("tax") || t.includes("percep")) {
+        iibb += amt;
+      } else if (t.includes("financing") || t.includes("cuota") || t.includes("installment") || t.includes("credit")) {
+        financing += amt;
+      }
+    }
+
     return {
-      ...parsed,
+      commission,
+      shipping,
+      iibb,
+      financing,
       net_received: d.net_received_amount || 0,
       transaction_amount: d.transaction_amount || 0,
       installments: d.installments || 1,
+      marketplace_fee_from_payment: Math.abs(d.marketplace_fee || 0),
       fee_details: fees,
     };
   } catch (e) {
-    return { commission: 0, shipping: 0, iibb: 0, financing: 0, net_received: 0, transaction_amount: 0, installments: 1, fee_details: [] };
+    return { commission: 0, shipping: 0, iibb: 0, financing: 0, net_received: 0, transaction_amount: 0, installments: 1, marketplace_fee_from_payment: 0, fee_details: [] };
   }
 }
 
-async function getShipmentCost(shipmentId, token) {
+async function getShipmentData(shipmentId, token) {
   try {
     const d = await apiGet(`/shipments/${shipmentId}`, token);
-    // shipping_option.cost = what the seller actually pays (after MeLi subsidies)
-    // base_cost = list price before any discounts
-    return d.shipping_option?.cost || d.base_cost || 0;
-  } catch (e) { return 0; }
+    return {
+      base_cost: d.base_cost || 0,
+      option_cost: d.shipping_option?.cost || 0,
+      order_cost: d.order_cost || 0,
+      raw: { base_cost: d.base_cost, order_cost: d.order_cost, option: d.shipping_option },
+    };
+  } catch (e) { return { base_cost: 0, option_cost: 0, order_cost: 0, raw: {} }; }
 }
 
 exports.handler = async (event) => {
@@ -79,35 +76,56 @@ exports.handler = async (event) => {
     const data = await apiGet(path, token);
     const orders = data.results || [];
 
-    const enriched = await Promise.all(orders.map(async (order) => {
+    const enriched = await Promise.all(orders.map(async (order, idx) => {
       const items = order.order_items || [];
       const payment = order.payments?.[0];
       const paymentId = payment?.id;
       const shipmentId = order.shipping?.id;
 
-      const [paymentDetails, shipmentCostFallback] = await Promise.all([
-        paymentId ? getPaymentDetails(paymentId, token) : Promise.resolve({ commission: 0, shipping: 0, iibb: 0, financing: 0, net_received: 0, transaction_amount: 0, installments: 1, fee_details: [] }),
-        shipmentId ? getShipmentCost(shipmentId, token) : Promise.resolve(0),
+      const [paymentDetails, shipmentData] = await Promise.all([
+        paymentId ? getPaymentDetails(paymentId, token) : Promise.resolve({ commission: 0, shipping: 0, iibb: 0, financing: 0, net_received: 0, transaction_amount: 0, installments: 1, marketplace_fee_from_payment: 0, fee_details: [] }),
+        shipmentId ? getShipmentData(shipmentId, token) : Promise.resolve({ base_cost: 0, option_cost: 0, order_cost: 0, raw: {} }),
       ]);
 
-      // Commission: prefer fee_details breakdown, fallback to marketplace_fee (NOT sale_fee which includes everything)
-      const commission = paymentDetails.commission || Math.abs(order.marketplace_fee || 0);
+      // sale_fee sum (includes everything MeLi charges per item)
+      const sale_fee_total = items.reduce((s, i) => s + Math.abs(i.sale_fee || 0), 0);
 
-      // Financing (cuotas sin interés) — seller absorbs this cost
+      // Commission: try fee_details breakdown → payment.marketplace_fee → order.marketplace_fee → fallback
+      const commission =
+        paymentDetails.commission ||
+        paymentDetails.marketplace_fee_from_payment ||
+        Math.abs(order.marketplace_fee || 0) ||
+        Math.abs(payment?.marketplace_fee || 0);
+
+      // Shipping: try fee_details → shipping_option.cost → base_cost
+      const shipping_from_fees = paymentDetails.shipping;
+      const shipping_cost = shipping_from_fees || shipmentData.option_cost || shipmentData.base_cost;
+
+      const iibb_real = paymentDetails.iibb;
       const financing = paymentDetails.financing;
 
-      // Shipping: prefer fee_details (exact seller cost), fallback to shipments API
-      const shipping_cost = paymentDetails.shipping || shipmentCostFallback;
-
-      // IIBB: real from payment fee_details
-      const iibb_real = paymentDetails.iibb;
+      // Debug snapshot (only for first order to diagnose field names)
+      const debug = idx === 0 ? {
+        sale_fee_total,
+        commission_from_fee_details: paymentDetails.commission,
+        commission_from_payment_mp_fee: paymentDetails.marketplace_fee_from_payment,
+        commission_from_order: Math.abs(order.marketplace_fee || 0),
+        shipping_from_fee_details: paymentDetails.shipping,
+        shipment_base_cost: shipmentData.base_cost,
+        shipment_option_cost: shipmentData.option_cost,
+        shipment_order_cost: shipmentData.order_cost,
+        iibb: iibb_real,
+        financing,
+        net_received: paymentDetails.net_received,
+        transaction_amount: paymentDetails.transaction_amount,
+        fee_details: paymentDetails.fee_details,
+      } : undefined;
 
       return {
         id: order.id,
         date: order.date_created,
         status: order.status,
         total_amount: order.total_amount || 0,
-        // commission here is pure MeLi fee (NOT including shipping or IIBB)
         commission: commission + financing,
         shipping_cost,
         shipment_id: shipmentId || null,
@@ -115,9 +133,7 @@ exports.handler = async (event) => {
         installments: paymentDetails.installments || payment?.installments || 1,
         iibb_real,
         net_received: paymentDetails.net_received,
-        // debug info
-        marketplace_fee: Math.abs(order.marketplace_fee || 0),
-        fee_details: paymentDetails.fee_details,
+        debug,
         items: items.map(i => ({
           title: i.item?.title || "—",
           item_id: i.item?.id || null,

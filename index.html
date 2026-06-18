@@ -188,6 +188,7 @@ const S = {
   rankChartInstance: null,
   productCosts: loadCosts(),
   darkMode: localStorage.getItem("darkMode")==="true",
+  debugOrder: null,
 };
 
 applyTheme();
@@ -342,9 +343,7 @@ async function loadAllOrders(){
       offset+=50;
     }
     S.orders=allOrders;
-    // Log fee_details of first order to help diagnose IIBB field names
-    if(allOrders[0]?.fee_details?.length) console.log("fee_details ejemplo:",JSON.stringify(allOrders[0].fee_details));
-    else console.log("fee_details vacío en primera orden - IIBB no disponible vía API de pagos");
+    S.debugOrder = allOrders[0]?.debug || null;
   }catch(e){
     S.error="Error al cargar ventas: "+e.message;
   }
@@ -585,6 +584,22 @@ function renderOrders(el){
     <div class="page-header"><div><div class="page-title">Órdenes</div><div class="page-sub">Detalle completo con costos reales · ${S.orders.length} ventas cargadas</div></div></div>
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
+    ${S.debugOrder?`<div class="card" style="margin:12px 0;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;background:var(--surface2);border:1px solid var(--orange);padding:12px;border-radius:8px">
+<b style="font-size:13px">🔍 DEBUG primera orden — campos de MeLi</b>
+sale_fee (todos los ítems): <b>${S.debugOrder.sale_fee_total?.toFixed(2)}</b>
+commission desde fee_details: <b>${S.debugOrder.commission_from_fee_details?.toFixed(2)}</b>
+marketplace_fee del pago: <b>${S.debugOrder.commission_from_payment_mp_fee?.toFixed(2)}</b>
+marketplace_fee del orden: <b>${S.debugOrder.commission_from_order?.toFixed(2)}</b>
+envío desde fee_details: <b>${S.debugOrder.shipping_from_fee_details?.toFixed(2)}</b>
+shipment base_cost: <b>${S.debugOrder.shipment_base_cost?.toFixed(2)}</b>
+shipment option_cost: <b>${S.debugOrder.shipment_option_cost?.toFixed(2)}</b>
+shipment order_cost: <b>${S.debugOrder.shipment_order_cost?.toFixed(2)}</b>
+IIBB real: <b>${S.debugOrder.iibb?.toFixed(2)}</b>
+financing: <b>${S.debugOrder.financing?.toFixed(2)}</b>
+transaction_amount: <b>${S.debugOrder.transaction_amount?.toFixed(2)}</b>
+net_received: <b>${S.debugOrder.net_received?.toFixed(2)}</b>
+fee_details tipos: <b>${(S.debugOrder.fee_details||[]).map(f=>f.type+"="+Math.abs(f.amount||0).toFixed(0)).join(", ")||"vacío"}</b>
+</div>`:""}
     ${!stats?`<div class="empty">Seleccioná un período y cargá las ventas.</div>`:`
     <div class="table-wrap">
       <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span></div>
