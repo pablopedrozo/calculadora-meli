@@ -218,6 +218,7 @@ const S = {
   total: 0,
   offset: 0,
   loading: false,
+  loadingMore: false,
   error: null,
   page: "dashboard",
   period: "30d",
@@ -402,22 +403,26 @@ async function fetchOrdersPage(offset,tries=2){
   return null;
 }
 
-// Carga TODAS las órdenes del período: en paralelo (por lotes), con progreso y tolerante a fallos
+// Carga las órdenes de adelante hacia atrás (las más recientes primero) y va mostrando
+// el dashboard apenas llega la primera tanda, mientras completa el resto del período en segundo plano.
 async function loadAllOrders(){
   await ensureToken();
-  S.loading=true; S.error=null; S.orders=[]; S.total=0;
-  renderContent();
+  S.loading=true; S.loadingMore=false; S.error=null; S.orders=[]; S.total=0;
+  renderContent(); // spinner inicial sólo hasta la primera tanda
+  const advPromise = loadAdvertising(); // en paralelo, no bloquea el render de ventas
   try{
-    await loadAdvertising();
-    // Primera página: nos dice el total
+    // Primera página = ventas más recientes (orders/search viene date_desc)
     const first = await fetchOrdersPage(0);
     if(!first) throw new Error("No se pudo conectar con MeLi");
     let allOrders = first.results||[];
     S.total = first.paging?.total || allOrders.length;
-    S.orders = allOrders; renderContent();
-
-    // Resto de páginas (tope 1500) en lotes paralelos de 4
     const cap = Math.min(S.total, 1500);
+
+    S.orders = allOrders;
+    S.loading = false;                          // ya hay datos → mostrar el dashboard
+    S.loadingMore = allOrders.length < cap;     // seguir completando hacia atrás
+    renderContent();
+
     const offsets=[];
     for(let o=50;o<cap;o+=50) offsets.push(o);
     const CHUNK=3;
@@ -425,14 +430,17 @@ async function loadAllOrders(){
       const batch = offsets.slice(i,i+CHUNK);
       const pages = await Promise.all(batch.map(o=>fetchOrdersPage(o)));
       pages.forEach(p=>{ if(p&&p.results) allOrders=allOrders.concat(p.results); });
-      S.orders=allOrders; renderContent(); // muestra progreso parcial
+      S.orders=allOrders;
+      S.loadingMore = (i+CHUNK) < offsets.length;
+      renderContent(); // se va completando con los días más viejos
     }
     S.orders=allOrders;
     S.debugOrder = allOrders[0]?.debug || null;
   }catch(e){
     S.error="Error al cargar ventas: "+e.message;
   }
-  S.loading=false;
+  try{ await advPromise; }catch(e){} // que la publicidad esté lista para el render final
+  S.loading=false; S.loadingMore=false;
   renderContent();
 }
 
@@ -477,13 +485,14 @@ function expenseCycleDays(e){
 }
 // Costo diario del gasto = monto ÷ días del ciclo (se renueva, así que el ritmo diario es constante)
 function expenseDailyRate(e){ return (parseFloat(e.amount)||0)/expenseCycleDays(e); }
-// Cantidad de días del período [from,to] que aplican al gasto (desde su fecha de pago en adelante)
+// Cantidad de días del período [from,to] que aplican al gasto.
+// Es un costo RECURRENTE y continuo: aplica a TODOS los días del período filtrado
+// (escala bien con cualquier rango), salvo que su fecha de pago sea futura (todavía no arrancó).
 function expenseDaysInPeriod(e,from,to){
-  const start=new Date(from+"T00:00:00"), payStart=new Date(e.startDate+"T00:00:00");
-  const realStart=start>payStart?start:payStart;
-  const end=new Date(to+"T00:00:00");
-  if(end<realStart) return 0;
-  return Math.round((end-realStart)/86400000)+1;
+  const end=new Date(to+"T00:00:00"), payStart=new Date(e.startDate+"T00:00:00");
+  if(payStart>end) return 0; // el gasto empieza después del período → todavía no aplica
+  const start=new Date(from+"T00:00:00");
+  return Math.round((end-start)/86400000)+1; // todos los días del período
 }
 // Suma de gastos activos prorrateados al período (type opcional: "fijo" | "variable")
 function getCostForPeriod(from,to,type){
@@ -725,6 +734,9 @@ function loadingMsg(base){
   const p = S.total ? ` · ${S.orders.length} de ${S.total}` : (S.orders.length?` · ${S.orders.length}`:"");
   return `<div class="loading-wrap"><div class="spinner"></div>${base}${p}</div>`;
 }
+function loadingMoreBanner(){
+  return S.loadingMore?`<div class="error-box" style="background:var(--accent-bg);color:var(--accent-text);border-color:var(--accent);display:flex;align-items:center;gap:10px"><div class="spinner" style="width:14px;height:14px;border-width:2px"></div>Mostrando las ventas más recientes — completando el resto del período... (${S.orders.length} de ${S.total})</div>`:"";
+}
 
 // Tarjetas (widgets) del dashboard — orden personalizable arrastrando
 function dashWidgets(stats){
@@ -793,6 +805,7 @@ function renderDashboard(el){
   el.innerHTML=`
     <div class="page-header"><div><div class="page-title">Dashboard</div><div class="page-sub">Resumen de ganancias · ${S.orders.length} ventas cargadas${S.total>S.orders.length?" (de "+S.total+" totales)":""}</div></div></div>
     ${configBar()}${periodBar()}
+    ${loadingMoreBanner()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
     ${!stats?`<div class="empty">Seleccioná un período y hacé clic en Cargar.</div>`:`
     ${dashGridHtml(stats)}
@@ -852,6 +865,7 @@ function renderOrders(el){
   el.innerHTML=`
     <div class="page-header"><div><div class="page-title">Órdenes</div><div class="page-sub">Detalle completo con costos reales · ${S.orders.length} ventas cargadas</div></div></div>
     ${configBar()}${periodBar()}
+    ${loadingMoreBanner()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
     <details class="card" style="margin:12px 0;padding:10px 12px">
       <summary style="cursor:pointer;font-size:12px;color:var(--text3);font-weight:600">🔧 Diagnóstico API (avanzado)</summary>
