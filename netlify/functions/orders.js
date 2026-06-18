@@ -23,9 +23,23 @@ async function getShippingCost(shipmentId, token) {
   try {
     const data = await apiGet(`/shipments/${shipmentId}`, token);
     return data.shipping_option?.cost || data.base_cost || 0;
-  } catch (e) {
-    return 0;
-  }
+  } catch (e) { return 0; }
+}
+
+async function getPaymentFees(paymentId, token) {
+  try {
+    const data = await apiGet(`/payments/${paymentId}`, token);
+    const fees = data.fee_details || [];
+    // Look for IIBB / tax withholdings in fee details
+    let iibb = 0;
+    for (const f of fees) {
+      const t = (f.type || "").toLowerCase();
+      if (t.includes("iibb") || t.includes("tax") || t.includes("retencion") || t.includes("retention") || t.includes("withholding")) {
+        iibb += Math.abs(f.amount || 0);
+      }
+    }
+    return { iibb, fee_details: fees };
+  } catch (e) { return { iibb: 0, fee_details: [] }; }
 }
 
 exports.handler = async (event) => {
@@ -37,9 +51,7 @@ exports.handler = async (event) => {
     const data = await apiGet(path, token);
     const orders = data.results || [];
 
-    // Fetch shipping costs in parallel (max 10 at a time to avoid timeout)
     const enriched = await Promise.all(orders.map(async (order) => {
-      // Commission: sum of sale_fee from items (most accurate)
       let commission = 0;
       const items = order.order_items || [];
       if (items.length > 0) {
@@ -47,15 +59,13 @@ exports.handler = async (event) => {
       }
       if (!commission) commission = Math.abs(order.marketplace_fee || 0);
 
-      // Shipping cost
-      let shippingCost = 0;
-      const shipmentId = order.shipping?.id;
-      if (shipmentId) {
-        shippingCost = await getShippingCost(shipmentId, token);
-      }
-
-      // Payment info
       const payment = order.payments?.[0];
+      const paymentId = payment?.id;
+
+      const [shippingCost, paymentFees] = await Promise.all([
+        order.shipping?.id ? getShippingCost(order.shipping.id, token) : Promise.resolve(0),
+        paymentId ? getPaymentFees(paymentId, token) : Promise.resolve({ iibb: 0, fee_details: [] }),
+      ]);
 
       return {
         id: order.id,
@@ -64,9 +74,11 @@ exports.handler = async (event) => {
         total_amount: order.total_amount || 0,
         commission,
         shipping_cost: shippingCost,
-        shipment_id: shipmentId || null,
+        shipment_id: order.shipping?.id || null,
         payment_method: payment?.payment_method_id || null,
         installments: payment?.installments || 1,
+        iibb_real: paymentFees.iibb,
+        fee_details: paymentFees.fee_details,
         items: items.map(i => ({
           title: i.item?.title || "—",
           item_id: i.item?.id || null,

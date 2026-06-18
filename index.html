@@ -237,7 +237,7 @@ function calcOrder(o){
   const precio = o.total_amount||0;
   const comision = o.commission||0;
   const envio = o.shipping_cost||0;
-  const iibb = precio*(S.iibbPct/100);
+  const iibb = (o.iibb_real && o.iibb_real > 0) ? o.iibb_real : precio*(S.iibbPct/100);
   const percepciones = precio*(S.percepcionesPct/100);
   const publiTotal = S.publiFromAPI?S.publiARS:S.publiManual;
   const totalOrds = S.orders.length||1;
@@ -599,7 +599,10 @@ function renderProducts(el){
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
     ${!byProduct.length?`<div class="empty">Cargá las ventas para ver los productos.</div>`:`
-    <div class="info-box">Ingresá el costo unitario de compra de cada producto. Se guarda automáticamente y se aplica a todas las órdenes.</div>
+    <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <span>Ingresá el costo unitario de compra de cada producto.</span>
+      <button class="btn-primary" style="white-space:nowrap;padding:6px 16px;font-size:13px" onclick="saveAllCosts()">Guardar cambios</button>
+    </div>
     <div class="table-wrap">
       <div class="table-header"><span class="table-title">▸ ${byProduct.length} productos distintos</span></div>
       <table>
@@ -634,7 +637,12 @@ function renderProducts(el){
     </div>`}`;
 }
 
-function saveCostInput(input){
+function saveAllCosts(){
+  document.querySelectorAll(".cost-input").forEach(input=>saveCostInput(input,false));
+  if(S.orders.length) renderContent();
+  alert("Costos guardados ✓");
+}
+function saveCostInput(input,rerender=true){
   const itemId=input.dataset.itemId;
   const title=input.dataset.title;
   const val=parseFloat(input.value)||0;
@@ -645,7 +653,7 @@ function saveCostInput(input){
   const idx=inputs.indexOf(input);
   const savedEls=document.querySelectorAll(".cost-saved");
   if(savedEls[idx]){savedEls[idx].classList.add("show");setTimeout(()=>savedEls[idx].classList.remove("show"),1500);}
-  if(S.orders.length) renderContent();
+  if(rerender && S.orders.length) renderContent();
 }
 
 function prevPage(){if(S.offset>0){S.offset=Math.max(0,S.offset-PAGE_SIZE);renderContent();}}
