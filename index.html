@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Calculadora MeLi Pro</title>
+<title>Calculadora de Ganancias para vendedores (no oficial)</title>
+<meta name="description" content="Herramienta independiente y no oficial para que vendedores calculen sus ganancias. No afiliada a MercadoLibre. Usa el login oficial de Mercado Libre (OAuth).">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta property="og:title" content="Calculadora de Ganancias (no oficial)">
+<meta property="og:description" content="Herramienta independiente, no afiliada a MercadoLibre. Login oficial de Mercado Libre.">
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;text y='13' font-size='13'&gt;💰&lt;/text&gt;&lt;/svg&gt;">
+<meta name="theme-color" content="#0f1117">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
@@ -631,13 +638,16 @@ function renderAuth(){
   document.getElementById("root").innerHTML=`
     <div class="auth-wrap">
       <div class="auth-card">
-        <div style="margin-bottom:18px"><span style="background:var(--accent);color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:1px">MELI PRO</span></div>
-        <h2>Calculadora de Ganancias</h2>
-        <p>Conectá tu cuenta para ver ventas reales, comisiones, envíos y ganancias automáticamente.</p>
-        <button class="btn-meli" onclick="doLogin()">Conectar con Mercado Libre</button>
+        <div style="margin-bottom:18px"><span style="background:var(--text3);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:1px">HERRAMIENTA INDEPENDIENTE · NO OFICIAL</span></div>
+        <h2>Calculadora de Ganancias para vendedores</h2>
+        <p>Conectá tu cuenta para ver tus ventas, comisiones, envíos y ganancias de forma automática.</p>
+        <button class="btn-meli" onclick="doLogin()">Ingresar con la cuenta oficial de Mercado Libre</button>
         <div class="auth-features">
-          ${["Comisiones reales por orden de MeLi","Costos de envío reales vía API","IIBB y percepciones configurables","Costo de producto por ítem","Publicidad automática de Product Ads","Ranking de productos más rentables"].map(f=>`
+          ${["Comisiones reales por orden","Costos de envío reales vía API","IIBB y percepciones por venta","Costo de producto por ítem","Publicidad automática de Product Ads","Ranking de productos más rentables"].map(f=>`
           <div class="auth-feature"><div class="check-icon"><svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="var(--green-text)" stroke-width="2" stroke-linecap="round"/></svg></div>${f}</div>`).join("")}
+        </div>
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:11px;color:var(--text3);line-height:1.6;text-align:left">
+          Herramienta <b>independiente y no oficial</b>. No está afiliada, asociada ni operada por MercadoLibre S.R.L. ni Mercado Pago. El ingreso usa el <b>login oficial de Mercado Libre</b> (OAuth): tu contraseña la escribís en <b>mercadolibre.com.ar</b> y esta app nunca la ve ni la guarda. Solo lee datos de tu propia cuenta de vendedor, para tu uso personal.
         </div>
       </div>
     </div>`;
@@ -647,9 +657,9 @@ function renderShell(){
   document.getElementById("root").innerHTML=`
     <div class="sidebar">
       <div class="sidebar-logo">
-        <span class="logo-badge">MELI</span>
-        <h1>Calculadora Pro</h1>
-        <div class="sub">Panel de ganancias</div>
+        <span class="logo-badge">💰 NO OFICIAL</span>
+        <h1>Calculadora de Ganancias</h1>
+        <div class="sub">Herramienta independiente</div>
       </div>
       <div class="nav-item active" data-page="dashboard" onclick="setPage('dashboard')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -677,6 +687,7 @@ function renderShell(){
           <div class="user-name">${S.nickname||"Usuario"}</div>
           <button class="logout-btn" onclick="doLogout()">Salir</button>
         </div>
+        <div style="font-size:9px;color:var(--text3);line-height:1.4;margin-top:2px">App independiente, no afiliada a MercadoLibre S.R.L. ni Mercado Pago. Ingreso con login oficial de Mercado Libre.</div>
       </div>
     </div>
     <div class="main" id="main-content"></div>`;
