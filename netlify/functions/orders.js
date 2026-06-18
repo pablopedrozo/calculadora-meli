@@ -19,27 +19,51 @@ function apiGet(path, token) {
   });
 }
 
-async function getShippingCost(shipmentId, token) {
+async function getShipmentData(shipmentId, token) {
   try {
-    const data = await apiGet(`/shipments/${shipmentId}`, token);
-    return data.shipping_option?.cost || data.base_cost || 0;
-  } catch (e) { return 0; }
+    const d = await apiGet(`/shipments/${shipmentId}`, token);
+    // base_cost = lo que paga el vendedor por el envío (independiente de si es gratis para el comprador)
+    // list_cost = precio de lista sin descuentos
+    // cost = costo final
+    const sellerCost = d.base_cost || d.shipping_option?.list_cost || d.shipping_option?.cost || 0;
+    return { cost: sellerCost, free_shipping: d.order_cost === 0 || sellerCost === 0 };
+  } catch (e) { return { cost: 0 }; }
 }
 
-async function getPaymentFees(paymentId, token) {
+async function getPaymentDetails(paymentId, token) {
   try {
-    const data = await apiGet(`/payments/${paymentId}`, token);
-    const fees = data.fee_details || [];
-    // Look for IIBB / tax withholdings in fee details
+    const d = await apiGet(`/payments/${paymentId}`, token);
+    const fees = d.fee_details || [];
+
     let iibb = 0;
+    let financing = 0;
+
     for (const f of fees) {
       const t = (f.type || "").toLowerCase();
-      if (t.includes("iibb") || t.includes("tax") || t.includes("retencion") || t.includes("retention") || t.includes("withholding")) {
-        iibb += Math.abs(f.amount || 0);
+      const amt = Math.abs(f.amount || 0);
+      // IIBB y retenciones impositivas
+      if (t.includes("iibb") || t.includes("withhold") || t.includes("retencion") ||
+          t.includes("retention") || t.includes("percep") || t === "tax" ||
+          t.includes("ingresos_brutos") || t.includes("igj")) {
+        iibb += amt;
+      }
+      // Cuotas sin interés - el vendedor absorbe el costo financiero
+      if (t.includes("financing") || t.includes("cuota") || t.includes("installment") || t.includes("credit")) {
+        financing += amt;
       }
     }
-    return { iibb, fee_details: fees };
-  } catch (e) { return { iibb: 0, fee_details: [] }; }
+
+    return {
+      iibb,
+      financing,
+      net_received: d.net_received_amount || 0,
+      transaction_amount: d.transaction_amount || 0,
+      installments: d.installments || 1,
+      fee_details: fees,
+    };
+  } catch (e) {
+    return { iibb: 0, financing: 0, net_received: 0, transaction_amount: 0, installments: 1, fee_details: [] };
+  }
 }
 
 exports.handler = async (event) => {
@@ -52,8 +76,10 @@ exports.handler = async (event) => {
     const orders = data.results || [];
 
     const enriched = await Promise.all(orders.map(async (order) => {
-      let commission = 0;
       const items = order.order_items || [];
+
+      // Comisión real por ítem (sale_fee ya incluye la comisión de MeLi según tipo de publicación)
+      let commission = 0;
       if (items.length > 0) {
         commission = items.reduce((s, i) => s + Math.abs(i.sale_fee || 0), 0);
       }
@@ -61,24 +87,29 @@ exports.handler = async (event) => {
 
       const payment = order.payments?.[0];
       const paymentId = payment?.id;
+      const shipmentId = order.shipping?.id;
 
-      const [shippingCost, paymentFees] = await Promise.all([
-        order.shipping?.id ? getShippingCost(order.shipping.id, token) : Promise.resolve(0),
-        paymentId ? getPaymentFees(paymentId, token) : Promise.resolve({ iibb: 0, fee_details: [] }),
+      const [shipment, paymentDetails] = await Promise.all([
+        shipmentId ? getShipmentData(shipmentId, token) : Promise.resolve({ cost: 0 }),
+        paymentId ? getPaymentDetails(paymentId, token) : Promise.resolve({ iibb: 0, financing: 0, net_received: 0, transaction_amount: 0, installments: 1, fee_details: [] }),
       ]);
+
+      // Si hay cuotas sin interés, el costo financiero se suma a la comisión real
+      const commissionTotal = commission + paymentDetails.financing;
 
       return {
         id: order.id,
         date: order.date_created,
         status: order.status,
         total_amount: order.total_amount || 0,
-        commission,
-        shipping_cost: shippingCost,
-        shipment_id: order.shipping?.id || null,
+        commission: commissionTotal,
+        shipping_cost: shipment.cost,
+        shipment_id: shipmentId || null,
         payment_method: payment?.payment_method_id || null,
-        installments: payment?.installments || 1,
-        iibb_real: paymentFees.iibb,
-        fee_details: paymentFees.fee_details,
+        installments: paymentDetails.installments || payment?.installments || 1,
+        iibb_real: paymentDetails.iibb,
+        net_received: paymentDetails.net_received,
+        fee_details: paymentDetails.fee_details,
         items: items.map(i => ({
           title: i.item?.title || "—",
           item_id: i.item?.id || null,

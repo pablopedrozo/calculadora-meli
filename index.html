@@ -288,10 +288,40 @@ function doLogout(){
   render();
 }
 
+async function fetchAdSpendClientSide(advertiserId, from, to){
+  // The pa.mercadolibre.com.ar BFF uses browser session cookies — call it directly from
+  // the browser so the user's existing MeLi login is used automatically.
+  const urls = [
+    `https://pa.mercadolibre.com.ar/pa/api/admin-pads/ajax/campaigns/metrics?dateFrom=${from}&dateTo=${to}&advertiserId=${advertiserId}`,
+    `https://pa.mercadolibre.com.ar/pa/api/admin-pads/ajax/summary?dateFrom=${from}&dateTo=${to}&advertiserId=${advertiserId}`,
+    `https://www.mercadolibre.com.ar/publicidad/api/metrics?dateFrom=${from}&dateTo=${to}&advertiserId=${advertiserId}`,
+  ];
+  for(const url of urls){
+    try{
+      const r = await fetch(url,{credentials:"include",headers:{Accept:"application/json"}});
+      if(!r.ok) continue;
+      const d = await r.json();
+      const spent = d?.totalSpend||d?.total_amount||d?.total_spent||d?.spend||
+        (Array.isArray(d?.campaigns)?d.campaigns.reduce((s,c)=>s+(c.totalSpend||c.spend||0),0):0)||
+        (Array.isArray(d?.data)?d.data.reduce((s,c)=>s+(c.totalSpend||c.spend||0),0):0);
+      if(spent>0){console.log("Publicidad desde BFF:",url,spent);return spent;}
+    }catch(e){/* CORS bloqueado o error de red */}
+  }
+  return 0;
+}
+
 async function loadAdvertising(){
   try{
     const data = await apiFn("advertising",{token:S.token,user_id:S.userId,from:S.dateFrom,to:S.dateTo});
-    if(data.available&&data.total_spent>0){S.publiARS=data.total_spent;S.publiFromAPI=true;}
+    if(data.available&&data.total_spent>0){
+      S.publiARS=data.total_spent;S.publiFromAPI=true;
+      return;
+    }
+    // Si la API de Netlify no devolvió datos, intentar directamente desde el browser
+    // usando las cookies de sesión de MeLi del usuario
+    const advertiserId = data.advertiser_id||703867;
+    const clientSpend = await fetchAdSpendClientSide(advertiserId, S.dateFrom, S.dateTo);
+    if(clientSpend>0){S.publiARS=clientSpend;S.publiFromAPI=true;}
     else S.publiFromAPI=false;
   }catch(e){S.publiFromAPI=false;}
 }
@@ -312,6 +342,9 @@ async function loadAllOrders(){
       offset+=50;
     }
     S.orders=allOrders;
+    // Log fee_details of first order to help diagnose IIBB field names
+    if(allOrders[0]?.fee_details?.length) console.log("fee_details ejemplo:",JSON.stringify(allOrders[0].fee_details));
+    else console.log("fee_details vacío en primera orden - IIBB no disponible vía API de pagos");
   }catch(e){
     S.error="Error al cargar ventas: "+e.message;
   }
