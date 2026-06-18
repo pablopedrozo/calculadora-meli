@@ -1,18 +1,13 @@
 const https = require("https");
 
-function apiRequest(path, token, method = "GET", body = null) {
+function apiGet(path, token) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(`https://api.mercadolibre.com${path}`);
-    const postBody = body ? JSON.stringify(body) : null;
     const options = {
       hostname: urlObj.hostname,
       path: urlObj.pathname + urlObj.search,
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        ...(postBody ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(postBody) } : {}),
-      },
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     };
     const req = https.request(options, (res) => {
       let raw = "";
@@ -23,7 +18,6 @@ function apiRequest(path, token, method = "GET", body = null) {
       });
     });
     req.on("error", reject);
-    if (postBody) req.write(postBody);
     req.end();
   });
 }
@@ -35,45 +29,50 @@ exports.handler = async (event) => {
   const ADV_ID = 703867;
   const debug = {};
 
-  // POST attempts to campaigns/metrics with different body structures
-  const postBodies = [
-    { advertiserId: ADV_ID, dateFrom: from, dateTo: to },
-    { advertiserId: String(ADV_ID), dateFrom: from, dateTo: to },
-    { advertiser_id: ADV_ID, dateFrom: from, dateTo: to },
-    { advertiserId: ADV_ID, date_from: from, date_to: to },
-    { advertiserId: ADV_ID, from, to },
-    { advertiserId: ADV_ID, dateFrom: from, dateTo: to, product_id: "PADS" },
+  // Step 1: search campaigns to get campaign IDs
+  const searchPaths = [
+    `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}&limit=100`,
+    `/advertising/product_ads/campaigns/search?advertiser_id=${ADV_ID}&dateFrom=${from}&dateTo=${to}&limit=100`,
+    `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&limit=100`,
+    `/advertising/product_ads/campaigns?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/campaigns?advertiser_id=${ADV_ID}`,
   ];
 
-  for (const body of postBodies) {
-    const key = JSON.stringify(body);
-    const r = await apiRequest(`/advertising/product_ads/campaigns/metrics`, token, "POST", body);
-    debug[key] = { status: r.status, body: r.body };
-    if (r.status === 200) break;
+  let campaignIds = [];
+  for (const p of searchPaths) {
+    const r = await apiGet(p, token);
+    debug[`search: ${p}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
+    if (r.status === 200) {
+      const results = r.body?.results || r.body?.campaigns || r.body?.data || (Array.isArray(r.body) ? r.body : []);
+      campaignIds = results.map(c => c.id || c.campaign_id || c.campaignId).filter(Boolean);
+      if (campaignIds.length > 0) break;
+    }
   }
 
-  // Also try GET with advertiserId as int (no quotes) via query string
-  const getAttempts = [
-    `/advertising/product_ads/campaigns/metrics?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}&product_id=PADS`,
-    `/advertising/product_ads/campaigns/metrics?advertiser_id=${ADV_ID}&dateFrom=${from}&dateTo=${to}`,
-  ];
-  for (const p of getAttempts) {
-    const r = await apiRequest(p, token);
-    debug[`GET ${p}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
-  }
+  debug.campaignIds = campaignIds;
 
-  const working = Object.entries(debug).find(([, v]) => v.status === 200);
-  if (working) {
-    const body = working[1].body;
-    const days = body?.daily_performance || body?.results || body?.data || body?.metrics || [];
-    const total_spent = Array.isArray(days)
-      ? days.reduce((s, d) => s + (d.total_amount || d.spend || d.cost || d.totalSpend || 0), 0)
-      : (body?.totalSpend || body?.total_spend || body?.spend || 0);
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ total_spent, available: true, FOUND: working[0], data: body }),
-    };
+  // Step 2: get metrics with campaign IDs
+  if (campaignIds.length > 0) {
+    const ids = campaignIds.join(",");
+    const metricsPaths = [
+      `/advertising/product_ads/campaigns/metrics?campaignIds=${ids}&dateFrom=${from}&dateTo=${to}`,
+      `/advertising/product_ads/campaigns/metrics?campaign_ids=${ids}&dateFrom=${from}&dateTo=${to}`,
+      `/advertising/product_ads/campaigns-table?campaignIds=${ids}&dateFrom=${from}&dateTo=${to}`,
+    ];
+    for (const p of metricsPaths) {
+      const r = await apiGet(p, token);
+      debug[`metrics: ${p}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
+      if (r.status === 200) {
+        const body = r.body;
+        const items = body?.results || body?.data || body?.campaigns || (Array.isArray(body) ? body : []);
+        const total_spent = items.reduce((s, d) => s + (d.total_amount || d.totalSpend || d.spend || d.cost || 0), 0);
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ total_spent, available: true, endpoint: p, debug }),
+        };
+      }
+    }
   }
 
   return {
