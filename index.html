@@ -282,11 +282,8 @@ function doLogin(){
   window.location.href=`https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&state=${rand}`;
 }
 function doLogout(){
-  const token = S.token;
   localStorage.clear(); S.productCosts={};
   Object.assign(S,{token:null,userId:null,nickname:null,orders:[],total:0,publiARS:0,publiFromAPI:false});
-  // Revoke token on MeLi side so next login forces new scope selection
-  if(token) fetch(`/.netlify/functions/revoke?token=${token}`).catch(()=>{});
   render();
 }
 
@@ -516,9 +513,16 @@ function renderDashboard(el){
       <div class="metric" style="border-top-color:var(--cyan)"><div class="metric-label">Envíos reales</div><div class="metric-value" style="color:var(--cyan-text)">${fmt(stats.totalEnvios)}</div></div>
       <div class="metric" style="border-top-color:var(--yellow)"><div class="metric-label">IIBB + Percepciones</div><div class="metric-value" style="color:var(--yellow-text)">${fmt(stats.totalIIBB+stats.totalPercepciones)}</div><div class="metric-sub">${S.iibbPct}% + ${S.percepcionesPct}%</div></div>
       <div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">Costo productos</div><div class="metric-value" style="color:var(--purple-text)">${fmt(stats.totalCostoProducto)}</div><div class="metric-sub">${stats.totalCostoProducto===0?"Cargá costos en Productos":""}</div></div>
-      ${stats.publiTotal>0
-        ?`<div class="metric" style="border-top-color:var(--purple)"><div class="metric-label">TACOS / True ROAS</div><div class="metric-value" style="color:var(--purple-text)">${fmtPct(stats.tacos)}</div><div class="metric-sub">True ROAS: ${stats.trueRoas?stats.trueRoas.toFixed(2)+"x":"—"}</div></div>`
-        :`<div class="metric" style="border-top-color:var(--border2)"><div class="metric-label">Publicidad</div><div class="metric-value" style="color:var(--text3);font-size:14px;font-weight:500">Sin datos</div><div class="metric-sub">Cargá en Config o activá el permiso</div></div>`}
+      <div class="metric" style="border-top-color:var(--purple)">
+        <div class="metric-label">Publicidad</div>
+        <div class="metric-value" style="color:var(--purple-text)">
+          <input id="publi-input" type="number" value="${S.publiManual||0}" step="100"
+            style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0"
+            onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()"
+            title="Ingresá el gasto en publicidad del período">
+        </div>
+        <div class="metric-sub">$ — editá directo acá</div>
+      </div>
     </div>
     <div class="charts-grid">
       <div class="card"><div class="card-title">Ventas vs Ganancia por día</div><div class="chart-wrap"><canvas id="chartVentas"></canvas></div></div>
