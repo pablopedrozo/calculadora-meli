@@ -603,9 +603,9 @@ function renderOrders(el){
               <td class="neutral">${fecha}</td>
               <td class="r">${fmt(o.precio)}</td>
               <td class="r ${o.costoProducto>0?"neg":"neutral"}">${o.costoProducto>0?fmt(-o.costoProducto):"—"}</td>
-              <td class="r neg">${fmt(-o.comision)}</td>
+              <td class="r neg" title="sale_fee real de MeLi">${fmt(-o.comision)}<br><small style="color:var(--text3);font-size:10px">${o.precio>0?((o.comision/o.precio)*100).toFixed(1)+"%" :""}</small></td>
               <td class="r neg">${fmt(-o.envio)}</td>
-              <td class="r neg">${fmt(-o.iibb)}</td>
+              <td class="r neg">${fmt(-o.iibb)}<br><small style="color:var(--text3);font-size:10px">${o.iibb>0&&o.precio>0?((o.iibb/o.precio)*100).toFixed(1)+"% real":S.iibbPct+"% est"}</small></td>
               <td class="r neg">${fmt(-o.percepciones)}</td>
               <td class="r ${o.ganancia>=0?"pos":"neg"}">${fmt(o.ganancia)}</td>
               <td class="r ${o.margen>=0?"pos":"neg"}">${fmtPct(o.margen)}</td>
