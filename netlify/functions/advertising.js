@@ -30,17 +30,33 @@ exports.handler = async (event) => {
   const ACC_ID = 741721;
   const debug = {};
 
+  // Try different date param names with known advertiser
+  const dateVariants = [
+    `date_from=${from}&date_to=${to}`,
+    `from=${from}&to=${to}`,
+    `start_date=${from}&end_date=${to}`,
+    `from_date=${from}&to_date=${to}`,
+    `begin=${from}&end=${to}`,
+  ];
+
+  for (const dates of dateVariants) {
+    const p = `/advertising/product_ads/advertisers/${ADV_ID}/reports/daily_performance?${dates}`;
+    const r = await apiGet(p, token);
+    if (r.status !== 404) debug[`date_variant: ${dates}`] = { status: r.status, body: r.body };
+  }
+
+  // Try different report path structures
   const paths = [
-    `/advertising/product_ads/advertisers/${ACC_ID}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/advertisers/${ACC_ID}/campaigns`,
-    `/advertising/advertisers/${ACC_ID}/reports/daily_performance?date_from=${from}&date_to=${to}&product_id=PADS`,
-    `/advertising/advertisers?account_id=${ACC_ID}&product_id=PADS`,
-    `/advertising/product_ads/advertisers/${ADV_ID}/reports/daily_performance?date_from=${from}&date_to=${to}&account_id=${ACC_ID}`,
-    `/advertising/product_ads/advertisers/${ADV_ID}/campaigns?account_id=${ACC_ID}`,
-    `/advertising/advertisers/${ADV_ID}/reports/daily_performance?date_from=${from}&date_to=${to}&account_id=${ACC_ID}&product_id=PADS`,
-    `/advertising/product_ads/accounts/${ACC_ID}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/accounts/${ACC_ID}/campaigns`,
-    `/advertising/accounts/${ACC_ID}/reports?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/reports/daily_performance?advertiser_id=${ADV_ID}&product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/report?product_id=PADS&advertiser_id=${ADV_ID}&date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/report?advertiser_id=${ADV_ID}&date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/advertiser/${ADV_ID}/reports/daily_performance?date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}/performance?date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}/stats?date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}/insights?date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}`,
+    `/advertising/advertisers/${ADV_ID}?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/advertisers/${ADV_ID}/performance?product_id=PADS&date_from=${from}&date_to=${to}`,
   ];
 
   for (const p of paths) {
@@ -49,21 +65,9 @@ exports.handler = async (event) => {
   }
 
   const working = Object.entries(debug).find(([, v]) => v !== 404 && v.status === 200);
-
   if (working) {
-    const body = working[1].body;
-    const days = body?.daily_performance || body?.results || body?.campaigns || [];
-    const total_spent = Array.isArray(days) ? days.reduce((s, d) => s + (d.total_amount || d.spend || d.cost || 0), 0) : 0;
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ total_spent, available: true, working_endpoint: working[0], debug }),
-    };
+    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, working: working[0], data: working[1].body }) };
   }
 
-  return {
-    statusCode: 200,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ total_spent: 0, available: false, debug }),
-  };
+  return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, debug }) };
 };
