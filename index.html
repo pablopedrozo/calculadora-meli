@@ -355,6 +355,20 @@ async function loadAllOrders(){
   renderContent();
 }
 
+async function runDiag(){
+  const box=document.getElementById("diag-output");
+  if(box){box.value="Consultando API de MeLi/MercadoPago... (10-20 seg)";}
+  try{
+    const r=await fetch(`/.netlify/functions/diag?token=${encodeURIComponent(S.token)}&user_id=${S.userId}&from=${S.dateFrom}&to=${S.dateTo}`);
+    const text=await r.text();
+    if(box)box.value=text;
+  }catch(e){if(box)box.value="Error: "+e.message;}
+}
+function copyDiag(){
+  const box=document.getElementById("diag-output");
+  if(box){box.select();document.execCommand("copy");navigator.clipboard?.writeText(box.value);alert("Copiado ✓ — pegámelo en el chat");}
+}
+
 function setPeriod(p){
   S.period=p;
   if(p==="today"){S.dateFrom=today();S.dateTo=today();}
@@ -588,6 +602,14 @@ function renderOrders(el){
     <div class="page-header"><div><div class="page-title">Órdenes</div><div class="page-sub">Detalle completo con costos reales · ${S.orders.length} ventas cargadas</div></div></div>
     ${configBar()}${periodBar()}
     ${S.error?`<div class="error-box">${S.error}</div>`:""}
+    <div class="card" style="margin:12px 0;padding:12px;border:1px dashed var(--orange)">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <button class="btn" style="background:var(--orange);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600" onclick="runDiag()">🔧 Diagnóstico API</button>
+        <button class="btn-ghost" onclick="copyDiag()">📋 Copiar resultado</button>
+        <span style="font-size:11px;color:var(--text3)">Trae el JSON crudo de una orden real para corregir comisión/envío/IIBB</span>
+      </div>
+      <textarea id="diag-output" readonly placeholder="Apretá 'Diagnóstico API' y después 'Copiar resultado', y pegámelo en el chat" style="width:100%;height:140px;font-family:monospace;font-size:10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical"></textarea>
+    </div>
     ${!stats?`<div class="empty">Seleccioná un período y cargá las ventas.</div>`:`
     <div class="table-wrap">
       <div class="table-header"><span class="table-title">▸ ${stats.count} órdenes</span></div>
