@@ -27,52 +27,31 @@ exports.handler = async (event) => {
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
   const ADV_ID = 703867;
+  const ACC_ID = 741721;
   const debug = {};
 
-  // Step 1: search campaigns to get campaign IDs
-  const searchPaths = [
-    `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}&limit=100`,
-    `/advertising/product_ads/campaigns/search?advertiser_id=${ADV_ID}&dateFrom=${from}&dateTo=${to}&limit=100`,
-    `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&limit=100`,
-    `/advertising/product_ads/campaigns?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}`,
-    `/advertising/product_ads/campaigns?advertiser_id=${ADV_ID}`,
+  // Try search with accountId, userId, or no advertiser param
+  const paths = [
+    `/advertising/product_ads/campaigns/search?accountId=${ACC_ID}&dateFrom=${from}&dateTo=${to}&limit=100`,
+    `/advertising/product_ads/campaigns/search?accountId=${ACC_ID}&limit=100`,
+    `/advertising/product_ads/campaigns/search?userId=${user_id}&dateFrom=${from}&dateTo=${to}&limit=100`,
+    `/advertising/product_ads/campaigns/search?dateFrom=${from}&dateTo=${to}&limit=100`,
+    `/advertising/product_ads/campaigns/search?limit=100`,
+    `/advertising/product_ads/campaigns/search?advertiserId=${ADV_ID}&accountId=${ACC_ID}&dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/campaigns/search?advertiser_id=${ADV_ID}&account_id=${ACC_ID}&dateFrom=${from}&dateTo=${to}`,
+    // Try campaigns-table directly (seen in dashboard network)
+    `/advertising/product_ads/campaigns-table?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/campaigns-table?accountId=${ACC_ID}&dateFrom=${from}&dateTo=${to}`,
   ];
 
-  let campaignIds = [];
-  for (const p of searchPaths) {
+  for (const p of paths) {
     const r = await apiGet(p, token);
-    debug[`search: ${p}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
-    if (r.status === 200) {
-      const results = r.body?.results || r.body?.campaigns || r.body?.data || (Array.isArray(r.body) ? r.body : []);
-      campaignIds = results.map(c => c.id || c.campaign_id || c.campaignId).filter(Boolean);
-      if (campaignIds.length > 0) break;
-    }
+    debug[p] = r.status === 404 ? 404 : { status: r.status, body: r.body };
   }
 
-  debug.campaignIds = campaignIds;
-
-  // Step 2: get metrics with campaign IDs
-  if (campaignIds.length > 0) {
-    const ids = campaignIds.join(",");
-    const metricsPaths = [
-      `/advertising/product_ads/campaigns/metrics?campaignIds=${ids}&dateFrom=${from}&dateTo=${to}`,
-      `/advertising/product_ads/campaigns/metrics?campaign_ids=${ids}&dateFrom=${from}&dateTo=${to}`,
-      `/advertising/product_ads/campaigns-table?campaignIds=${ids}&dateFrom=${from}&dateTo=${to}`,
-    ];
-    for (const p of metricsPaths) {
-      const r = await apiGet(p, token);
-      debug[`metrics: ${p}`] = r.status === 404 ? 404 : { status: r.status, body: r.body };
-      if (r.status === 200) {
-        const body = r.body;
-        const items = body?.results || body?.data || body?.campaigns || (Array.isArray(body) ? body : []);
-        const total_spent = items.reduce((s, d) => s + (d.total_amount || d.totalSpend || d.spend || d.cost || 0), 0);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ total_spent, available: true, endpoint: p, debug }),
-        };
-      }
-    }
+  const working = Object.entries(debug).find(([, v]) => v !== 404 && v.status === 200);
+  if (working) {
+    return { statusCode: 200, body: JSON.stringify({ found: working[0], data: working[1].body }) };
   }
 
   return {
