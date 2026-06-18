@@ -412,7 +412,7 @@ async function loadAllOrders(){
     const cap = Math.min(S.total, 1500);
     const offsets=[];
     for(let o=50;o<cap;o+=50) offsets.push(o);
-    const CHUNK=4;
+    const CHUNK=3;
     for(let i=0;i<offsets.length;i+=CHUNK){
       const batch = offsets.slice(i,i+CHUNK);
       const pages = await Promise.all(batch.map(o=>fetchOrdersPage(o)));
