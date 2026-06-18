@@ -27,36 +27,18 @@ exports.handler = async (event) => {
   if (!token || !user_id) return { statusCode: 401, body: JSON.stringify({ error: "No token" }) };
 
   const ADV_ID = 703867;
-  const ACC_ID = 741721;
   const debug = {};
 
-  // Try different date param names with known advertiser
-  const dateVariants = [
-    `date_from=${from}&date_to=${to}`,
-    `from=${from}&to=${to}`,
-    `start_date=${from}&end_date=${to}`,
-    `from_date=${from}&to_date=${to}`,
-    `begin=${from}&end=${to}`,
-  ];
-
-  for (const dates of dateVariants) {
-    const p = `/advertising/product_ads/advertisers/${ADV_ID}/reports/daily_performance?${dates}`;
-    const r = await apiGet(p, token);
-    if (r.status !== 404) debug[`date_variant: ${dates}`] = { status: r.status, body: r.body };
-  }
-
-  // Try different report path structures
+  // Try metrics endpoint with camelCase dates (what the dashboard actually uses)
   const paths = [
-    `/advertising/reports/daily_performance?advertiser_id=${ADV_ID}&product_id=PADS&date_from=${from}&date_to=${to}`,
-    `/advertising/report?product_id=PADS&advertiser_id=${ADV_ID}&date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/report?advertiser_id=${ADV_ID}&date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/advertiser/${ADV_ID}/reports/daily_performance?date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/advertisers/${ADV_ID}/performance?date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/advertisers/${ADV_ID}/stats?date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/advertisers/${ADV_ID}/insights?date_from=${from}&date_to=${to}`,
-    `/advertising/product_ads/advertisers/${ADV_ID}`,
-    `/advertising/advertisers/${ADV_ID}?product_id=PADS&date_from=${from}&date_to=${to}`,
-    `/advertising/advertisers/${ADV_ID}/performance?product_id=PADS&date_from=${from}&date_to=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}/metrics?dateFrom=${from}&dateTo=${to}`,
+    `/advertising/advertisers/${ADV_ID}/metrics?product_id=PADS&dateFrom=${from}&dateTo=${to}`,
+    `/advertising/advertisers/${ADV_ID}/metrics?dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}/reports/daily_performance?dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/advertisers/${ADV_ID}/campaigns/metrics?dateFrom=${from}&dateTo=${to}`,
+    `/advertising/advertisers/${ADV_ID}/campaigns/metrics?product_id=PADS&dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/campaigns/metrics?advertiserId=${ADV_ID}&dateFrom=${from}&dateTo=${to}`,
+    `/advertising/product_ads/campaigns/metrics?advertiser_id=${ADV_ID}&dateFrom=${from}&dateTo=${to}`,
   ];
 
   for (const p of paths) {
@@ -66,8 +48,15 @@ exports.handler = async (event) => {
 
   const working = Object.entries(debug).find(([, v]) => v !== 404 && v.status === 200);
   if (working) {
-    return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, working: working[0], data: working[1].body }) };
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ total_spent: 0, available: false, FOUND: working[0], data: working[1].body }),
+    };
   }
 
-  return { statusCode: 200, body: JSON.stringify({ total_spent: 0, available: false, debug }) };
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ total_spent: 0, available: false, debug }),
+  };
 };
