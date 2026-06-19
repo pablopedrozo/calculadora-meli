@@ -89,6 +89,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .intg-desc{font-size:12px;color:var(--text2);margin-top:2px}
 .intg-detail{font-size:12px;color:var(--text3);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.5}
 .intg-actions{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+.intg-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:13px;font-family:inherit;outline:none}
+.intg-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(37,99,235,.15)}
 .cm-card{margin-bottom:16px;border-left:3px solid var(--green)}
 .cm-card>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .cm-card>summary::-webkit-details-marker{display:none}
@@ -228,6 +230,10 @@ const S = {
   authTab: "login",     // "login" | "register"
   authMsg: "",          // mensaje (error / aviso) en la pantalla de login
   authBusy: false,
+  // Integraciones nuevas (se guardan en la base por cuenta)
+  shopify: null,        // { shop, token }
+  mp: null,             // { token }  (Mercado Pago del canal Shopify)
+  intgMsg: "",          // mensaje al conectar una integración
   // Conexión a Mercado Libre (integración)
   token: localStorage.getItem("meli_token"),
   refreshToken: localStorage.getItem("meli_refresh"),
@@ -941,24 +947,71 @@ function renderIntegrations(el){
       ? `<button class="btn-meli" onclick="doLogin()">🔗 Reconectar Mercado Libre</button>`
       : `<button class="btn-meli" onclick="doLogin()">Conectar con Mercado Libre</button>`;
 
+  // Shopify
+  const shopActions = S.shopify
+    ? `<span style="font-size:12px;color:var(--text2)">Tienda: <b>${S.shopify.shop}</b></span><button class="btn-ghost" onclick="disconnectShopify()">Desconectar</button>`
+    : `<div style="display:flex;flex-direction:column;gap:7px;width:100%">
+         <input id="shopify-shop" class="intg-input" placeholder="tu-tienda.myshopify.com" value="${S.shopify?.shop||""}">
+         <input id="shopify-token" class="intg-input" type="password" placeholder="Admin API access token (shpat_…)">
+         <button class="btn-primary" style="align-self:flex-start" onclick="connectShopify()">Conectar Shopify</button>
+       </div>`;
+  // Mercado Pago (del canal Shopify)
+  const mpActions = S.mp
+    ? `<span style="font-size:12px;color:var(--text2)">✓ Conectado</span><button class="btn-ghost" onclick="disconnectMP()">Desconectar</button>`
+    : `<div style="display:flex;flex-direction:column;gap:7px;width:100%">
+         <input id="mp-token" class="intg-input" type="password" placeholder="Access Token (APP_USR-… o PROD-…)">
+         <button class="btn-primary" style="align-self:flex-start" onclick="connectMP()">Conectar Mercado Pago</button>
+       </div>`;
+
   el.innerHTML=`
     <div class="page-header"><div><div class="page-title">Integraciones</div><div class="page-sub">Conectá tus plataformas y la app trae tus ventas, costos y publicidad automáticamente</div></div></div>
+    ${S.intgMsg?`<div class="info-box ${S.intgMsgType==="err"?"error-box":""}" style="${S.intgMsgType==="ok"?"background:var(--green-bg);color:var(--green-text);border-color:var(--green)":""}">${S.intgMsg}</div>`:""}
     <div class="intg-grid">
       ${integrationCard({key:"meli",name:"Mercado Libre",desc:"Ventas, comisiones, envíos, IIBB, cuotas y Product Ads",color:"#FFE600",logo:'<span style="font-size:22px">🛒</span>',state:meli,
         detail: meli==="connected"?"Trayendo tus ventas y costos reales automáticamente.":(meli==="reconnect"?"Tu sesión venció. Reconectá para seguir trayendo datos.":"Usa el login oficial de Mercado Libre. La app nunca ve tu contraseña."),
         actions: meliActions})}
-      ${integrationCard({key:"shopify",name:"Shopify",desc:"Ventas y pedidos de tu tienda Shopify",color:"#95BF47",logo:'<span style="font-size:20px">🛍️</span>',state:"soon",
-        detail:"En construcción — la sumamos cuando tengamos la base de datos lista.",
-        actions:`<button class="btn-ghost" disabled style="opacity:.6;cursor:not-allowed">Conectar</button>`})}
-      ${integrationCard({key:"mp",name:"Mercado Pago",desc:"Para usar un Mercado Pago distinto al de MeLi (ej. el de Shopify)",color:"#009EE3",logo:'<span style="font-size:20px">💳</span>',state:"soon",
-        detail:"En construcción — conexión directa a Mercado Pago, aparte del de Mercado Libre.",
-        actions:`<button class="btn-ghost" disabled style="opacity:.6;cursor:not-allowed">Conectar</button>`})}
+      ${integrationCard({key:"shopify",name:"Shopify",desc:"Ventas y pedidos de tu tienda Shopify",color:"#95BF47",logo:'<span style="font-size:20px">🛍️</span>',state:S.shopify?"connected":"available",
+        detail:"📦 Canal Shopify: la <b>venta</b> pasa acá. Necesita también Mercado Pago (abajo) para las comisiones reales.",
+        actions: shopActions})}
+      ${integrationCard({key:"mp",name:"Mercado Pago",desc:"El que recibe la plata de Shopify (sus comisiones y tasas)",color:"#009EE3",logo:'<span style="font-size:20px">💳</span>',state:S.mp?"connected":"available",
+        detail:"💳 Es el Mercado Pago de tu canal Shopify (distinto al de MeLi). De acá salen las <b>comisiones reales</b> de cada cobro.",
+        actions: mpActions})}
       ${integrationCard({key:"meta",name:"Meta Ads",desc:"Gasto de publicidad de Facebook e Instagram",color:"#0866FF",logo:'<span style="font-size:20px">📘</span>',state:"soon",
         detail:"En construcción — gasto de Meta para sumarlo al cálculo de ganancias.",
         actions:`<button class="btn-ghost" disabled style="opacity:.6;cursor:not-allowed">Conectar</button>`})}
     </div>
-    <div style="font-size:11px;color:var(--text3);margin-top:16px;line-height:1.6">App independiente, no afiliada a MercadoLibre S.R.L., Mercado Pago, Shopify ni Meta. Cada integración usa el login/API oficial de cada plataforma.</div>`;
+    <div style="font-size:11px;color:var(--text3);margin-top:16px;line-height:1.6">App independiente, no afiliada a MercadoLibre S.R.L., Mercado Pago, Shopify ni Meta. Cada integración usa la API oficial de cada plataforma. Los tokens se guardan en tu cuenta.</div>`;
 }
+
+async function connectShopify(){
+  let shop=(document.getElementById("shopify-shop").value||"").trim().toLowerCase().replace(/^https?:\/\//,"").replace(/\/.*$/,"");
+  const token=(document.getElementById("shopify-token").value||"").trim();
+  if(!shop||!token){ S.intgMsg="Completá el dominio de la tienda y el token."; S.intgMsgType="err"; renderContent(); return; }
+  if(!shop.includes(".myshopify.com")) shop=shop+".myshopify.com";
+  S.intgMsg="Probando conexión con Shopify…"; S.intgMsgType="info"; renderContent();
+  try{
+    const r=await fetch(`/.netlify/functions/shopify?shop=${encodeURIComponent(shop)}&token=${encodeURIComponent(token)}&action=test`);
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||d.error){ S.intgMsg="No se pudo conectar con Shopify: "+(d.error||("HTTP "+r.status))+". Revisá el dominio y el token (scopes read_orders, read_products)."; S.intgMsgType="err"; renderContent(); return; }
+    S.shopify={shop,token}; saveState();
+    S.intgMsg="✅ Shopify conectado: "+(d.name||shop); S.intgMsgType="ok"; renderContent();
+  }catch(e){ S.intgMsg="Error de red: "+e.message; S.intgMsgType="err"; renderContent(); }
+}
+function disconnectShopify(){ S.shopify=null; saveState(); S.intgMsg="Shopify desconectado."; S.intgMsgType="info"; renderContent(); }
+
+async function connectMP(){
+  const token=(document.getElementById("mp-token").value||"").trim();
+  if(!token){ S.intgMsg="Pegá el Access Token de Mercado Pago."; S.intgMsgType="err"; renderContent(); return; }
+  S.intgMsg="Probando conexión con Mercado Pago…"; S.intgMsgType="info"; renderContent();
+  try{
+    const r=await fetch(`/.netlify/functions/mp?token=${encodeURIComponent(token)}&action=test`);
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||d.error){ S.intgMsg="No se pudo conectar con Mercado Pago: "+(d.error||("HTTP "+r.status))+". Revisá el Access Token."; S.intgMsgType="err"; renderContent(); return; }
+    S.mp={token}; saveState();
+    S.intgMsg="✅ Mercado Pago conectado"+(d.nickname?": "+d.nickname:""); S.intgMsgType="ok"; renderContent();
+  }catch(e){ S.intgMsg="Error de red: "+e.message; S.intgMsgType="err"; renderContent(); }
+}
+function disconnectMP(){ S.mp=null; saveState(); S.intgMsg="Mercado Pago desconectado."; S.intgMsgType="info"; renderContent(); }
 
 function renderDashboard(el){
   if(S.loading){el.innerHTML=loadingMsg("Cargando ventas...");return;}
@@ -1313,6 +1366,8 @@ async function loadState(){
       if(Array.isArray(d.dashOrder)) S.dashOrder=d.dashOrder;
       if(d.meli){ S.token=d.meli.token||null; S.refreshToken=d.meli.refreshToken||null; S.tokenExp=d.meli.tokenExp||0; S.userId=d.meli.userId||null; S.nickname=d.meli.nickname||null; }
       else { S.token=null; S.refreshToken=null; S.userId=null; S.nickname=null; }
+      S.shopify = d.shopify||null;
+      S.mp = d.mp||null;
     }else{
       // Sin fila en la base: si hay datos locales (usuario original), migrarlos
       if(Object.keys(S.productCosts||{}).length || (S.expenses||[]).length || S.token){ await saveState(true); }
@@ -1329,6 +1384,8 @@ function saveState(now){
       productCosts:S.productCosts||{}, expenses:S.expenses||[],
       percepcionesPct:S.percepcionesPct||0, publiManual:S.publiManual||0, dashOrder:S.dashOrder||[],
       meli: S.token?{token:S.token,refreshToken:S.refreshToken,tokenExp:S.tokenExp,userId:S.userId,nickname:S.nickname}:null,
+      shopify: S.shopify||null,
+      mp: S.mp||null,
     };
     try{ await supa.from("user_state").upsert({user_id:S.appUserId,data,updated_at:new Date().toISOString()}); }
     catch(e){ console.warn("saveState",e); }
