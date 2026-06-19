@@ -198,6 +198,7 @@ tr:hover td{background:var(--surface2)}
 <script>
 const CLIENT_ID = "820259386035678";
 const REDIRECT_URI = window.location.origin + "/callback";
+const SHOPIFY_CLIENT_ID = "7fac56e77a87a22a971d12cadc013840"; // público (el secreto está en el server)
 
 // === Supabase: cuentas de la app (registro/login con email y contraseña) ===
 const SUPA_URL = "https://thogpialgpayzyeefzce.supabase.co";
@@ -947,13 +948,13 @@ function renderIntegrations(el){
       ? `<button class="btn-meli" onclick="doLogin()">🔗 Reconectar Mercado Libre</button>`
       : `<button class="btn-meli" onclick="doLogin()">Conectar con Mercado Libre</button>`;
 
-  // Shopify
+  // Shopify (OAuth: escribís el dominio y autorizás en tu tienda)
   const shopActions = S.shopify
     ? `<span style="font-size:12px;color:var(--text2)">Tienda: <b>${S.shopify.shop}</b></span><button class="btn-ghost" onclick="disconnectShopify()">Desconectar</button>`
     : `<div style="display:flex;flex-direction:column;gap:7px;width:100%">
          <input id="shopify-shop" class="intg-input" placeholder="tu-tienda.myshopify.com" value="${S.shopify?.shop||""}">
-         <input id="shopify-token" class="intg-input" type="password" placeholder="Admin API access token (shpat_…)">
-         <button class="btn-primary" style="align-self:flex-start" onclick="connectShopify()">Conectar Shopify</button>
+         <button class="btn-primary" style="align-self:flex-start" onclick="connectShopify()">Conectar con Shopify</button>
+         <div style="font-size:11px;color:var(--text3)">Te lleva a Shopify a autorizar (no pegás ningún token).</div>
        </div>`;
   // Mercado Pago (del canal Shopify)
   const mpActions = S.mp
@@ -983,19 +984,38 @@ function renderIntegrations(el){
     <div style="font-size:11px;color:var(--text3);margin-top:16px;line-height:1.6">App independiente, no afiliada a MercadoLibre S.R.L., Mercado Pago, Shopify ni Meta. Cada integración usa la API oficial de cada plataforma. Los tokens se guardan en tu cuenta.</div>`;
 }
 
-async function connectShopify(){
+// Inicia OAuth: redirige a Shopify para autorizar (no se pega token a mano)
+function connectShopify(){
   let shop=(document.getElementById("shopify-shop").value||"").trim().toLowerCase().replace(/^https?:\/\//,"").replace(/\/.*$/,"");
-  const token=(document.getElementById("shopify-token").value||"").trim();
-  if(!shop||!token){ S.intgMsg="Completá el dominio de la tienda y el token."; S.intgMsgType="err"; renderContent(); return; }
-  if(!shop.includes(".myshopify.com")) shop=shop+".myshopify.com";
-  S.intgMsg="Probando conexión con Shopify…"; S.intgMsgType="info"; renderContent();
+  if(!shop){ S.intgMsg="Escribí el dominio de tu tienda (ej. tu-tienda.myshopify.com)."; S.intgMsgType="err"; renderContent(); return; }
+  if(!shop.endsWith(".myshopify.com")) shop=shop.replace(/\.myshopify\.com.*/,"")+".myshopify.com";
+  localStorage.setItem("shopify_pending_shop", shop); // recordar la tienda hasta que vuelva el OAuth
+  const redirect = window.location.origin + "/callback";
+  const scopes = "read_orders,read_products";
+  const state = "shopify_"+Math.random().toString(36).slice(2);
+  window.location.href = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_CLIENT_ID}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}`;
+}
+// Cuando Shopify vuelve a /callback?code=...&shop=...  → canjear el código por el token.
+// No guarda todavía en la base: deja la conexión "pendiente" y boot() la aplica DESPUÉS
+// de cargar los datos del usuario, para no pisar costos/gastos.
+async function handleShopifyCallback(){
+  const p=new URLSearchParams(window.location.search);
+  const code=p.get("code"); const shop=p.get("shop")||localStorage.getItem("shopify_pending_shop");
+  if(!code||!shop) return false;
+  window.history.replaceState({},"","/");
+  S.page="integrations";
   try{
-    const r=await fetch(`/.netlify/functions/shopify?shop=${encodeURIComponent(shop)}&token=${encodeURIComponent(token)}&action=test`);
+    const r=await fetch(`/.netlify/functions/shopify-auth?shop=${encodeURIComponent(shop)}&code=${encodeURIComponent(code)}`);
     const d=await r.json().catch(()=>({}));
-    if(!r.ok||d.error){ S.intgMsg="No se pudo conectar con Shopify: "+(d.error||("HTTP "+r.status))+". Revisá el dominio y el token (scopes read_orders, read_products)."; S.intgMsgType="err"; renderContent(); return; }
-    S.shopify={shop,token}; saveState();
-    S.intgMsg="✅ Shopify conectado: "+(d.name||shop); S.intgMsgType="ok"; renderContent();
-  }catch(e){ S.intgMsg="Error de red: "+e.message; S.intgMsgType="err"; renderContent(); }
+    if(d.access_token){
+      localStorage.setItem("shopify_pending", JSON.stringify({shop, token:d.access_token}));
+      localStorage.removeItem("shopify_pending_shop");
+      S.intgMsg="✅ Shopify conectado: "+shop; S.intgMsgType="ok";
+    }else{
+      S.intgMsg="No se pudo conectar con Shopify: "+(d.error||("HTTP "+r.status)); S.intgMsgType="err";
+    }
+  }catch(e){ S.intgMsg="Error conectando Shopify: "+e.message; S.intgMsgType="err"; }
+  return true;
 }
 function disconnectShopify(){ S.shopify=null; saveState(); S.intgMsg="Shopify desconectado."; S.intgMsgType="info"; renderContent(); }
 
@@ -1403,14 +1423,22 @@ async function boot(){
   S.appUser = session.user?.email || "Mi cuenta";
   S.appUserId = session.user?.id || null;
   const firstTime = !_booted; _booted=true;
-  if(firstTime){ await loadState(); }                      // hidratar S desde la base (una vez)
+  if(firstTime){
+    await loadState();                                     // hidratar S desde la base (una vez)
+    // Aplicar conexión de Shopify recién autorizada (sin pisar lo de la base)
+    const pend=localStorage.getItem("shopify_pending");
+    if(pend){ try{ S.shopify=JSON.parse(pend); }catch(e){} localStorage.removeItem("shopify_pending"); await saveState(true); }
+  }
   renderShell();
   renderContent();
   if(firstTime && S.token) loadAllOrders();               // MeLi conectado → traer ventas (una vez)
 }
 
 async function render(){
-  try{ await handleCallback(); }catch(e){}  // si volvió del OAuth de MeLi, guarda esa conexión
+  try{
+    if(new URLSearchParams(window.location.search).get("shop")) await handleShopifyCallback(); // volvió de Shopify
+    else await handleCallback();                                                                // volvió de MeLi (o nada)
+  }catch(e){}
   await boot();                             // gate de cuenta de la app
 }
 render();
