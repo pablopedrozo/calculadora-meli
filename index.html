@@ -80,6 +80,14 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .draggable-metric.drag-over{outline:2px dashed var(--accent);outline-offset:2px}
 .dash-hint{font-size:11px;color:var(--text3);margin:0 0 10px;display:flex;align-items:center;gap:10px}
 .dash-hint button{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:11px;padding:3px 8px;cursor:pointer}
+.intg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.intg-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;box-shadow:var(--card-shadow)}
+.intg-head{display:flex;align-items:center;gap:12px}
+.intg-logo{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.intg-name{font-size:15px;font-weight:700;color:var(--text)}
+.intg-desc{font-size:12px;color:var(--text2);margin-top:2px}
+.intg-detail{font-size:12px;color:var(--text3);margin-top:12px;padding-top:12px;border-top:1px solid var(--border);line-height:1.5}
+.intg-actions{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
 .cm-card{margin-bottom:16px;border-left:3px solid var(--green)}
 .cm-card>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .cm-card>summary::-webkit-details-marker{display:none}
@@ -700,6 +708,10 @@ function renderShell(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Dashboard
       </div>
+      <div class="nav-item" data-page="integrations" onclick="setPage('integrations')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l1-1"/></svg>
+        Integraciones
+      </div>
       <div class="nav-item" data-page="orders" onclick="setPage('orders')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
         Órdenes
@@ -740,6 +752,7 @@ function renderContent(){
   const el=document.getElementById("main-content");
   if(!el) return;
   if(S.page==="dashboard") renderDashboard(el);
+  else if(S.page==="integrations") renderIntegrations(el);
   else if(S.page==="orders") renderOrders(el);
   else if(S.page==="products") renderProducts(el);
   else if(S.page==="expenses") renderExpenses(el);
@@ -811,8 +824,68 @@ function dashDrop(ev,targetId){ ev.preventDefault(); ev.stopPropagation(); reord
 function dashDropEnd(ev){ ev.preventDefault(); reorderDash(null); }
 function resetDashOrder(){ S.dashOrder=[]; localStorage.removeItem("dash_order"); renderContent(); }
 
+// ===== INTEGRACIONES =====
+function integrationCard(o){
+  // o: {key,name,desc,color,logo, state:"connected"|"reconnect"|"available"|"soon", detail, actions}
+  const badge = o.state==="connected"?`<span style="background:var(--green-bg);color:var(--green-text);font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px">● Conectado</span>`
+    : o.state==="reconnect"?`<span style="background:var(--orange-bg);color:var(--orange-text);font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px">⚠ Reconectar</span>`
+    : o.state==="soon"?`<span style="background:var(--surface2);color:var(--text3);font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px">Próximamente</span>`
+    : `<span style="background:var(--accent-bg);color:var(--accent-text);font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px">Disponible</span>`;
+  return `<div class="intg-card" style="opacity:${o.state==="soon"?".7":"1"}">
+    <div class="intg-head">
+      <div class="intg-logo" style="background:${o.color}">${o.logo}</div>
+      <div style="flex:1">
+        <div class="intg-name">${o.name}</div>
+        <div class="intg-desc">${o.desc}</div>
+      </div>
+      ${badge}
+    </div>
+    ${o.detail?`<div class="intg-detail">${o.detail}</div>`:""}
+    <div class="intg-actions">${o.actions||""}</div>
+  </div>`;
+}
+
+function renderIntegrations(el){
+  const meli = S.needReconnect?"reconnect":(S.token?"connected":"available");
+  const meliActions = meli==="connected"
+    ? `<span style="font-size:12px;color:var(--text2)">Cuenta: <b>${S.nickname||"—"}</b></span><button class="btn-ghost" onclick="doLogout()">Desconectar</button>`
+    : meli==="reconnect"
+      ? `<button class="btn-meli" onclick="doLogin()">🔗 Reconectar Mercado Libre</button>`
+      : `<button class="btn-meli" onclick="doLogin()">Conectar con Mercado Libre</button>`;
+
+  el.innerHTML=`
+    <div class="page-header"><div><div class="page-title">Integraciones</div><div class="page-sub">Conectá tus plataformas y la app trae tus ventas, costos y publicidad automáticamente</div></div></div>
+    <div class="intg-grid">
+      ${integrationCard({key:"meli",name:"Mercado Libre",desc:"Ventas, comisiones, envíos, IIBB, cuotas y Product Ads",color:"#FFE600",logo:'<span style="font-size:22px">🛒</span>',state:meli,
+        detail: meli==="connected"?"Trayendo tus ventas y costos reales automáticamente.":(meli==="reconnect"?"Tu sesión venció. Reconectá para seguir trayendo datos.":"Usa el login oficial de Mercado Libre. La app nunca ve tu contraseña."),
+        actions: meliActions})}
+      ${integrationCard({key:"shopify",name:"Shopify",desc:"Ventas y pedidos de tu tienda Shopify",color:"#95BF47",logo:'<span style="font-size:20px">🛍️</span>',state:"soon",
+        detail:"En construcción — la sumamos cuando tengamos la base de datos lista.",
+        actions:`<button class="btn-ghost" disabled style="opacity:.6;cursor:not-allowed">Conectar</button>`})}
+      ${integrationCard({key:"mp",name:"Mercado Pago",desc:"Para usar un Mercado Pago distinto al de MeLi (ej. el de Shopify)",color:"#009EE3",logo:'<span style="font-size:20px">💳</span>',state:"soon",
+        detail:"En construcción — conexión directa a Mercado Pago, aparte del de Mercado Libre.",
+        actions:`<button class="btn-ghost" disabled style="opacity:.6;cursor:not-allowed">Conectar</button>`})}
+      ${integrationCard({key:"meta",name:"Meta Ads",desc:"Gasto de publicidad de Facebook e Instagram",color:"#0866FF",logo:'<span style="font-size:20px">📘</span>',state:"soon",
+        detail:"En construcción — gasto de Meta para sumarlo al cálculo de ganancias.",
+        actions:`<button class="btn-ghost" disabled style="opacity:.6;cursor:not-allowed">Conectar</button>`})}
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:16px;line-height:1.6">App independiente, no afiliada a MercadoLibre S.R.L., Mercado Pago, Shopify ni Meta. Cada integración usa el login/API oficial de cada plataforma.</div>`;
+}
+
 function renderDashboard(el){
   if(S.loading){el.innerHTML=loadingMsg("Cargando ventas...");return;}
+  // Sin ninguna integración conectada → dashboard pelado con bienvenida
+  if(!S.token){
+    el.innerHTML=`
+      <div class="page-header"><div><div class="page-title">Dashboard</div><div class="page-sub">Tu panel de ganancias</div></div></div>
+      <div class="empty" style="padding:80px 20px">
+        <div style="font-size:40px;margin-bottom:8px">👋</div>
+        <div style="font-size:16px;color:var(--text);font-weight:600;margin-bottom:6px">Todavía no conectaste ninguna plataforma</div>
+        <div style="color:var(--text3);max-width:420px;margin:0 auto 18px;line-height:1.6">Conectá Mercado Libre (y pronto Shopify, Mercado Pago y Meta) para que la app traiga tus ventas, costos y publicidad automáticamente.</div>
+        <button class="btn-primary" onclick="setPage('integrations')">🔗 Ir a Integraciones</button>
+      </div>`;
+    return;
+  }
   const stats=S.orders.length?getStats():null;
   const byProduct=stats?getByProduct(stats.calcs):[];
   const maxG=byProduct.length?Math.max(...byProduct.map(p=>p.ganancia),1):1;
@@ -1137,13 +1210,11 @@ function exportCSV(){
 }
 
 async function render(){
-  try{ await handleCallback(); }catch(e){}
-  if(!S.token){ renderAuth(); return; }
-  try{ await ensureToken(); }catch(e){}   // nunca debe romper el arranque
-  if(!S.token){ renderAuth(); return; }   // sólo si el refresh confirmó sesión inválida
-  renderShell();
+  try{ await handleCallback(); }catch(e){}  // si volvió de OAuth de MeLi, guarda la sesión
+  // (Más adelante acá irá el gate de login con email/contraseña vía Supabase.)
+  renderShell();                            // siempre se muestra la app
   renderContent();
-  loadAllOrders();                        // se dispara siempre que haya sesión
+  if(S.token) loadAllOrders();              // si MeLi está conectado, trae las ventas
 }
 render();
 </script>
