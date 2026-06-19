@@ -12,6 +12,7 @@
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;text y='13' font-size='13'&gt;💰&lt;/text&gt;&lt;/svg&gt;">
 <meta name="theme-color" content="#0f1117">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -169,6 +170,14 @@ tr:hover td{background:var(--surface2)}
 .auth-features{display:flex;flex-direction:column;gap:8px;margin-top:24px;text-align:left}
 .auth-feature{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
 .check-icon{width:16px;height:16px;background:var(--green-bg);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.auth-tabs{display:flex;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:16px}
+.auth-tab{flex:1;background:none;border:none;border-radius:7px;padding:9px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer;font-family:inherit;transition:all .15s}
+.auth-tab.active{background:var(--surface);color:var(--accent);box-shadow:var(--card-shadow)}
+.auth-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;color:var(--text);font-size:14px;font-family:inherit;outline:none;margin-bottom:10px}
+.auth-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(37,99,235,.15)}
+.auth-msg{font-size:12.5px;line-height:1.5;padding:10px 12px;border-radius:8px;margin-bottom:6px;text-align:left}
+.auth-msg.err{background:var(--red-bg);color:var(--red-text);border:1px solid var(--red)}
+.auth-msg.ok{background:var(--green-bg);color:var(--green-text);border:1px solid var(--green)}
 /* Loading */
 .loading-wrap{display:flex;align-items:center;justify-content:center;padding:60px;color:var(--text3);gap:10px;font-size:14px}
 .spinner{width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
@@ -187,6 +196,11 @@ tr:hover td{background:var(--surface2)}
 <script>
 const CLIENT_ID = "820259386035678";
 const REDIRECT_URI = window.location.origin + "/callback";
+
+// === Supabase: cuentas de la app (registro/login con email y contraseña) ===
+const SUPA_URL = "https://thogpialgpayzyeefzce.supabase.co";
+const SUPA_KEY = "sb_publishable_4LHzSnGvu3Hvmprp_Gkq6g__Zpy2QUt";
+const supa = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 function loadCosts(){try{return JSON.parse(localStorage.getItem("product_costs")||"{}");}catch(e){return{};}}
 function saveCosts(c){localStorage.setItem("product_costs",JSON.stringify(c));}
@@ -208,6 +222,12 @@ function loadExpenses(){
 function saveExpenses(){localStorage.setItem("fixed_expenses",JSON.stringify(S.expenses));}
 
 const S = {
+  // Cuenta de la app (Supabase)
+  appUser: null,        // usuario logueado (email)
+  authTab: "login",     // "login" | "register"
+  authMsg: "",          // mensaje (error / aviso) en la pantalla de login
+  authBusy: false,
+  // Conexión a Mercado Libre (integración)
   token: localStorage.getItem("meli_token"),
   refreshToken: localStorage.getItem("meli_refresh"),
   tokenExp: parseInt(localStorage.getItem("meli_token_exp")||"0"),
@@ -678,22 +698,83 @@ function configBar(){
 }
 
 function renderAuth(){
+  const isReg = S.authTab==="register";
   document.getElementById("root").innerHTML=`
     <div class="auth-wrap">
       <div class="auth-card">
-        <div style="margin-bottom:18px"><span style="background:var(--text3);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:1px">HERRAMIENTA INDEPENDIENTE · NO OFICIAL</span></div>
-        <h2>Calculadora de Ganancias para vendedores</h2>
-        <p>Conectá tu cuenta para ver tus ventas, comisiones, envíos y ganancias de forma automática.</p>
-        <button class="btn-meli" onclick="doLogin()">Ingresar con la cuenta oficial de Mercado Libre</button>
-        <div class="auth-features">
-          ${["Comisiones reales por orden","Costos de envío reales vía API","IIBB y percepciones por venta","Costo de producto por ítem","Publicidad automática de Product Ads","Ranking de productos más rentables"].map(f=>`
-          <div class="auth-feature"><div class="check-icon"><svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="var(--green-text)" stroke-width="2" stroke-linecap="round"/></svg></div>${f}</div>`).join("")}
+        <div style="margin-bottom:16px"><span style="background:var(--text3);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:1px">💰 NO OFICIAL</span></div>
+        <h2>Calculadora de Ganancias</h2>
+        <p>${isReg?"Creá tu cuenta para empezar.":"Ingresá con tu email y contraseña."}</p>
+        <div class="auth-tabs">
+          <button class="auth-tab${!isReg?" active":""}" onclick="setAuthTab('login')">Iniciar sesión</button>
+          <button class="auth-tab${isReg?" active":""}" onclick="setAuthTab('register')">Crear cuenta</button>
         </div>
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:11px;color:var(--text3);line-height:1.6;text-align:left">
-          Herramienta <b>independiente y no oficial</b>. No está afiliada, asociada ni operada por MercadoLibre S.R.L. ni Mercado Pago. El ingreso usa el <b>login oficial de Mercado Libre</b> (OAuth): tu contraseña la escribís en <b>mercadolibre.com.ar</b> y esta app nunca la ve ni la guarda. Solo lee datos de tu propia cuenta de vendedor, para tu uso personal.
+        <form onsubmit="return ${isReg?"supaRegister":"supaLogin"}(event)">
+          <input id="auth-email" class="auth-input" type="email" placeholder="Tu email" required autocomplete="email">
+          <input id="auth-pass" class="auth-input" type="password" placeholder="${isReg?"Contraseña (mín. 6 caracteres)":"Contraseña"}" required minlength="6" autocomplete="${isReg?"new-password":"current-password"}">
+          ${S.authMsg?`<div class="auth-msg ${S.authMsgType==="ok"?"ok":"err"}">${S.authMsg}</div>`:""}
+          <button class="btn-primary" type="submit" style="width:100%;margin-top:8px" ${S.authBusy?"disabled":""}>${S.authBusy?"Procesando…":(isReg?"Crear cuenta":"Entrar")}</button>
+        </form>
+        ${!isReg?`<div style="text-align:center;margin-top:10px"><a href="#" onclick="supaReset();return false" style="font-size:12px;color:var(--accent-text);text-decoration:none">¿Olvidaste tu contraseña?</a></div>`:""}
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);font-size:11px;color:var(--text3);line-height:1.6;text-align:left">
+          Herramienta independiente, no afiliada a MercadoLibre S.R.L., Mercado Pago, Shopify ni Meta. Después de crear tu cuenta conectás tus plataformas desde la sección <b>Integraciones</b>.
         </div>
       </div>
     </div>`;
+  setTimeout(()=>document.getElementById("auth-email")?.focus(),60);
+}
+
+function setAuthTab(t){ S.authTab=t; S.authMsg=""; renderAuth(); }
+
+function traducirAuthError(m){
+  m=(m||"").toLowerCase();
+  if(m.includes("invalid login")||m.includes("invalid credentials")) return "Email o contraseña incorrectos.";
+  if(m.includes("email not confirmed")) return "Confirmá tu email primero (revisá tu casilla y el spam).";
+  if(m.includes("already registered")||m.includes("already been registered")||m.includes("user already")) return "Ese email ya está registrado. Iniciá sesión.";
+  if(m.includes("should be at least")||m.includes("password")) return "La contraseña debe tener al menos 6 caracteres.";
+  if(m.includes("rate limit")||m.includes("too many")||m.includes("for security")) return "Demasiados intentos. Esperá unos minutos.";
+  if(m.includes("unable to validate email")||m.includes("invalid email")) return "El email no es válido.";
+  return m || "Ocurrió un error. Probá de nuevo.";
+}
+
+async function supaRegister(ev){
+  ev.preventDefault();
+  const email=document.getElementById("auth-email").value.trim();
+  const pass=document.getElementById("auth-pass").value;
+  S.authBusy=true; S.authMsg=""; renderAuth();
+  const { data, error } = await supa.auth.signUp({ email, password:pass, options:{ emailRedirectTo: window.location.origin } });
+  S.authBusy=false;
+  if(error){ S.authMsg=traducirAuthError(error.message); S.authMsgType="err"; renderAuth(); return false; }
+  if(!data.session){ // requiere confirmar el email
+    S.authTab="login"; S.authMsg="✅ Te enviamos un mail a "+email+". Confirmá tu cuenta y después iniciá sesión."; S.authMsgType="ok"; renderAuth();
+  }else{ boot(); } // confirmación desactivada → entra directo
+  return false;
+}
+
+async function supaLogin(ev){
+  ev.preventDefault();
+  const email=document.getElementById("auth-email").value.trim();
+  const pass=document.getElementById("auth-pass").value;
+  S.authBusy=true; S.authMsg=""; renderAuth();
+  const { error } = await supa.auth.signInWithPassword({ email, password:pass });
+  S.authBusy=false;
+  if(error){ S.authMsg=traducirAuthError(error.message); S.authMsgType="err"; renderAuth(); return false; }
+  boot();
+  return false;
+}
+
+async function supaReset(){
+  const email=document.getElementById("auth-email")?.value.trim();
+  if(!email){ S.authMsg="Escribí tu email arriba y volvé a tocar el link."; S.authMsgType="err"; renderAuth(); return; }
+  const { error } = await supa.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+  S.authMsg = error ? traducirAuthError(error.message) : ("📧 Te enviamos un mail a "+email+" para resetear la contraseña.");
+  S.authMsgType = error?"err":"ok"; renderAuth();
+}
+
+async function supaLogout(){
+  try{ await supa.auth.signOut(); }catch(e){}
+  S.appUser=null; _booted=false;
+  renderAuth();
 }
 
 function renderShell(){
@@ -731,10 +812,10 @@ function renderShell(){
         </button>
         <div class="user-pill">
           <div class="user-dot"></div>
-          <div class="user-name">${S.nickname||"Usuario"}</div>
-          <button class="logout-btn" onclick="doLogout()">Salir</button>
+          <div class="user-name" title="${S.appUser||""}">${S.appUser||"Mi cuenta"}</div>
+          <button class="logout-btn" onclick="supaLogout()">Salir</button>
         </div>
-        <div style="font-size:9px;color:var(--text3);line-height:1.4;margin-top:2px">App independiente, no afiliada a MercadoLibre S.R.L. ni Mercado Pago. Ingreso con login oficial de Mercado Libre.</div>
+        <div style="font-size:9px;color:var(--text3);line-height:1.4;margin-top:2px">App independiente, no afiliada a MercadoLibre S.R.L., Mercado Pago, Shopify ni Meta.</div>
       </div>
     </div>
     <div class="main" id="main-content"></div>`;
@@ -1209,14 +1290,30 @@ function exportCSV(){
   a.click();
 }
 
-async function render(){
-  try{ await handleCallback(); }catch(e){}  // si volvió de OAuth de MeLi, guarda la sesión
-  // (Más adelante acá irá el gate de login con email/contraseña vía Supabase.)
-  renderShell();                            // siempre se muestra la app
+let _booted=false;
+// Decide qué mostrar según la sesión de la app (Supabase)
+async function boot(){
+  let session=null;
+  try{ session=(await supa.auth.getSession()).data.session; }catch(e){}
+  if(!session){ S.appUser=null; renderAuth(); return; }   // sin cuenta → login/registro
+  S.appUser = session.user?.email || "Mi cuenta";
+  const firstTime = !_booted; _booted=true;
+  renderShell();
   renderContent();
-  if(S.token) loadAllOrders();              // si MeLi está conectado, trae las ventas
+  if(firstTime && S.token) loadAllOrders();               // MeLi conectado → traer ventas (una vez)
+}
+
+async function render(){
+  try{ await handleCallback(); }catch(e){}  // si volvió del OAuth de MeLi, guarda esa conexión
+  await boot();                             // gate de cuenta de la app
 }
 render();
+
+// Reaccionar a confirmación de mail / login desde otra pestaña / logout
+supa.auth.onAuthStateChange((event)=>{
+  if(event==="SIGNED_IN") boot();
+  else if(event==="SIGNED_OUT"){ _booted=false; renderAuth(); }
+});
 </script>
 </body>
 </html>
