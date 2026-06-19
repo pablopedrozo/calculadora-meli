@@ -71,6 +71,10 @@ exports.handler = async (event) => {
   try {
     const path = `/orders/search?seller=${user_id}&order.date_created.from=${from}T00:00:00.000-03:00&order.date_created.to=${to}T23:59:59.000-03:00&limit=50&offset=${offset}&sort=date_desc`;
     const data = await apiGet("api.mercadolibre.com", path, token);
+    // Si MeLi rechaza el token, surfacear el 401 (no ocultarlo como "0 ventas")
+    if (data.status === 401 || data.status === 403) {
+      return { statusCode: 401, body: JSON.stringify({ error: "unauthorized", results: [] }) };
+    }
     const orders = data.body?.results || [];
 
     const enriched = [];

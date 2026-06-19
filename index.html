@@ -219,6 +219,7 @@ const S = {
   offset: 0,
   loading: false,
   loadingMore: false,
+  needReconnect: false,
   error: null,
   page: "dashboard",
   period: "30d",
@@ -307,7 +308,7 @@ async function apiFn(name,params,timeout=35000){
   const t = setTimeout(()=>ctrl.abort(), timeout); // no quedarse colgado si la función tarda en despertar
   try{
     const r = await fetch(`/.netlify/functions/${name}?${qs}`,{signal:ctrl.signal});
-    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    if(!r.ok){ const e=new Error(`HTTP ${r.status}`); e.status=r.status; throw e; }
     return await r.json();
   } finally { clearTimeout(t); }
 }
@@ -329,14 +330,15 @@ async function ensureToken(){
   if(Date.now() < S.tokenExp - 5*60*1000) return; // todavía válido
   for(let i=0;i<3;i++){
     try{
-      const res = await apiFn("refresh",{refresh_token:S.refreshToken});
-      if(res && res.access_token){ saveSession(res); return; } // ok
-      if(res && /invalid_grant/.test(res.error||"")){ doLogout(); return; } // refresh vencido de verdad → re-login
+      // fetch directo para poder leer el cuerpo del error (apiFn tiraría excepción y lo perderíamos)
+      const r = await fetch(`/.netlify/functions/refresh?refresh_token=${encodeURIComponent(S.refreshToken)}`);
+      const d = await r.json().catch(()=>({}));
+      if(r.ok && d.access_token){ saveSession(d); S.needReconnect=false; return; } // refrescado OK
+      // MeLi rechazó el refresh_token (vencido/rotado) → hay que reconectar la cuenta
+      if(/invalid_grant|invalid_token|forbidden|unauthor/i.test((d.error||"")+" "+(d.message||""))){ S.needReconnect=true; return; }
     }catch(e){ /* red caída / función despertando → reintentar */ }
     await new Promise(r=>setTimeout(r, 900*(i+1)));
   }
-  // No se pudo refrescar tras varios intentos: NO deslogueamos (puede ser red).
-  // Seguimos con el token actual; si está vencido, la carga mostrará el error con botón Cargar.
 }
 
 async function handleCallback(){
@@ -404,6 +406,7 @@ async function fetchOrdersPage(offset,tries=2){
     try{
       return await apiFn("orders",{token:S.token,user_id:S.userId,from:S.dateFrom,to:S.dateTo,offset});
     }catch(e){
+      if(e.status===401||e.status===403){ S.needReconnect=true; return null; } // sesión vencida, no insistir
       if(t===tries-1) return null;
       await new Promise(r=>setTimeout(r, 700*(t+1))); // esperar antes de reintentar
     }
@@ -414,7 +417,9 @@ async function fetchOrdersPage(offset,tries=2){
 // Carga las órdenes de adelante hacia atrás (las más recientes primero) y va mostrando
 // el dashboard apenas llega la primera tanda, mientras completa el resto del período en segundo plano.
 async function loadAllOrders(){
+  S.needReconnect=false;
   await ensureToken();
+  if(S.needReconnect){ S.loading=false; renderContent(); return; } // sesión vencida → mostrar reconectar
   S.loading=true; S.loadingMore=false; S.error=null; S.orders=[]; S.total=0;
   renderContent(); // spinner inicial sólo hasta la primera tanda
   const advPromise = loadAdvertising(); // en paralelo, no bloquea el render de ventas
@@ -422,6 +427,7 @@ async function loadAllOrders(){
     // Primera página = ventas más recientes (orders/search viene date_desc).
     // 5 reintentos con backoff: cubre el arranque en frío (la función tarda en despertar).
     const first = await fetchOrdersPage(0, 5);
+    if(S.needReconnect){ S.loading=false; renderContent(); return; } // 401 → reconectar
     if(!first) throw new Error("No se pudo conectar con MeLi. Tocá “Cargar” para reintentar.");
     let allOrders = first.results||[];
     S.total = first.paging?.total || allOrders.length;
@@ -815,8 +821,11 @@ function renderDashboard(el){
     <div class="page-header"><div><div class="page-title">Dashboard</div><div class="page-sub">Resumen de ganancias · ${S.orders.length} ventas cargadas${S.total>S.orders.length?" (de "+S.total+" totales)":""}</div></div></div>
     ${configBar()}${periodBar()}
     ${loadingMoreBanner()}
-    ${S.error?`<div class="error-box">${S.error}</div>`:""}
-    ${!stats?`<div class="empty">${S.error?"No se pudieron cargar las ventas.":"No hay ventas para mostrar en este período."}<br><button class="btn-primary" style="margin-top:14px" onclick="loadAllOrders()">${S.error?"↻ Reintentar":"Cargar ventas"}</button></div>`:`
+    ${S.error&&!S.needReconnect?`<div class="error-box">${S.error}</div>`:""}
+    ${!stats?(S.needReconnect
+      ?`<div class="empty">⚠️ Tu sesión con Mercado Libre venció.<br>Reconectá tu cuenta para volver a ver tus ventas (no perdés nada de lo cargado).<br><button class="btn-meli" style="margin-top:14px" onclick="doLogin()">🔗 Reconectar con Mercado Libre</button></div>`
+      :`<div class="empty">${S.error?"No se pudieron cargar las ventas.":"No hay ventas para mostrar en este período."}<br><button class="btn-primary" style="margin-top:14px" onclick="loadAllOrders()">${S.error?"↻ Reintentar":"Cargar ventas"}</button></div>`)
+    :`
     ${dashGridHtml(stats)}
     ${stats.gastosTotalPeriodo>0?`<details class="card cm-card">
       <summary>
