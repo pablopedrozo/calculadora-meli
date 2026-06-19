@@ -203,7 +203,7 @@ const SUPA_KEY = "sb_publishable_4LHzSnGvu3Hvmprp_Gkq6g__Zpy2QUt";
 const supa = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 function loadCosts(){try{return JSON.parse(localStorage.getItem("product_costs")||"{}");}catch(e){return{};}}
-function saveCosts(c){localStorage.setItem("product_costs",JSON.stringify(c));}
+function saveCosts(c){localStorage.setItem("product_costs",JSON.stringify(c));saveState();}
 function loadExpenses(){
   let arr=[]; try{arr=JSON.parse(localStorage.getItem("fixed_expenses")||"[]");}catch(e){arr=[];}
   // Normaliza / migra: agrega fecha de pago, duración, custom y activo si faltan
@@ -219,11 +219,12 @@ function loadExpenses(){
     active:e.active!==false,
   }));
 }
-function saveExpenses(){localStorage.setItem("fixed_expenses",JSON.stringify(S.expenses));}
+function saveExpenses(){localStorage.setItem("fixed_expenses",JSON.stringify(S.expenses));saveState();}
 
 const S = {
   // Cuenta de la app (Supabase)
   appUser: null,        // usuario logueado (email)
+  appUserId: null,      // id del usuario (para guardar/leer en la base)
   authTab: "login",     // "login" | "register"
   authMsg: "",          // mensaje (error / aviso) en la pantalla de login
   authBusy: false,
@@ -349,6 +350,7 @@ function saveSession(res){
   localStorage.setItem("meli_token",S.token);
   localStorage.setItem("meli_user_id",S.userId);
   localStorage.setItem("meli_token_exp",String(S.tokenExp));
+  saveState(); // guardar la conexión de MeLi en la cuenta
 }
 
 // Renueva el access_token usando el refresh_token si está por vencer (margen de 5 min).
@@ -381,6 +383,7 @@ async function handleCallback(){
       const user = await apiFn("user",{token:S.token,user_id:S.userId});
       S.nickname=user.nickname||"Usuario";
       localStorage.setItem("meli_nickname",S.nickname);
+      saveState(); // guardar el nickname junto con la conexión
       return true;
     }
   }catch(e){console.error(e);}
@@ -396,6 +399,7 @@ function doLogout(){
   // Borra solo la sesión; conserva costos de productos y configuración del usuario
   ["meli_token","meli_refresh","meli_token_exp","meli_user_id","meli_nickname"].forEach(k=>localStorage.removeItem(k));
   Object.assign(S,{token:null,refreshToken:null,tokenExp:0,userId:null,nickname:null,orders:[],total:0,publiARS:0,publiFromAPI:false,publiCampaigns:[],allItems:[]});
+  saveState(); // persistir la desconexión de MeLi en la cuenta
   render();
 }
 
@@ -690,10 +694,10 @@ function periodBar(){
 function configBar(){
   return `<div class="config-row">
     <span class="config-label-main">⚙ Config</span>
-    <div class="config-field"><label title="Impuestos adicionales que no aparecen por venta en MercadoPago (ej. percepción IVA o IIBB sobre transferencias). El IIBB por venta ya se trackea solo.">Percep. extra</label><input class="config-input" type="number" value="${S.percepcionesPct}" step="0.1" onchange="S.percepcionesPct=parseFloat(this.value)||0;localStorage.setItem('percPct',S.percepcionesPct);if(S.orders.length)renderContent()"><span class="config-suffix">%</span></div>
+    <div class="config-field"><label title="Impuestos adicionales que no aparecen por venta en MercadoPago (ej. percepción IVA o IIBB sobre transferencias). El IIBB por venta ya se trackea solo.">Percep. extra</label><input class="config-input" type="number" value="${S.percepcionesPct}" step="0.1" onchange="S.percepcionesPct=parseFloat(this.value)||0;localStorage.setItem('percPct',S.percepcionesPct);saveState();if(S.orders.length)renderContent()"><span class="config-suffix">%</span></div>
     ${S.publiFromAPI
       ?`<div class="publi-pill">✓ Publicidad MeLi: ${fmt(S.publiARS)}</div>`
-      :`<div class="config-field"><label>Publicidad manual</label><input class="config-input" style="color:var(--purple)" type="number" value="${S.publiManual}" step="100" onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()"><span class="config-suffix">$</span></div>`}
+      :`<div class="config-field"><label>Publicidad manual</label><input class="config-input" style="color:var(--purple)" type="number" value="${S.publiManual}" step="100" onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);saveState();if(S.orders.length)renderContent()"><span class="config-suffix">$</span></div>`}
   </div>`;
 }
 
@@ -773,7 +777,10 @@ async function supaReset(){
 
 async function supaLogout(){
   try{ await supa.auth.signOut(); }catch(e){}
-  S.appUser=null; _booted=false;
+  // Limpiar datos locales para que otra cuenta en el mismo navegador arranque limpia (la verdad vive en la base)
+  ["product_costs","fixed_expenses","dash_order","percPct","publiManual","meli_token","meli_refresh","meli_token_exp","meli_user_id","meli_nickname"].forEach(k=>localStorage.removeItem(k));
+  Object.assign(S,{appUser:null,appUserId:null,productCosts:{},expenses:[],dashOrder:[],percepcionesPct:0,publiManual:0,token:null,refreshToken:null,tokenExp:0,userId:null,nickname:null,orders:[],total:0,publiARS:0,publiFromAPI:false,publiCampaigns:[],allItems:[]});
+  _booted=false;
   renderAuth();
 }
 
@@ -868,7 +875,7 @@ function dashWidgets(stats){
   W.push({id:"publicidad",color:"var(--purple)",label:`Publicidad ${S.publiFromAPI?'<span style="color:var(--green-text);font-size:10px">● auto MeLi</span>':""}`,
     value: S.publiFromAPI
       ? `<span style="color:var(--purple-text)">${fmt(S.publiARS)}</span>`
-      : `<input id="publi-input" draggable="false" type="number" value="${S.publiManual||0}" step="100" style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0" onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);if(S.orders.length)renderContent()">`,
+      : `<input id="publi-input" draggable="false" type="number" value="${S.publiManual||0}" step="100" style="width:100%;background:transparent;border:none;border-bottom:1px dashed var(--purple-text);color:var(--purple-text);font-size:inherit;font-weight:inherit;text-align:center;outline:none;padding:2px 0" onchange="S.publiManual=parseFloat(this.value)||0;localStorage.setItem('publiManual',S.publiManual);saveState();if(S.orders.length)renderContent()">`,
     sub: S.publiFromAPI?`ACOS ${S.publiAcos.toFixed(1)}% · ${S.publiCampaigns.length} camp. activas`:"$ — no se auto-cargó, editá acá"});
   return W;
 }
@@ -899,11 +906,11 @@ function reorderDash(targetId){
   let o=S.dashOrder.filter(x=>x!==drag);
   const idx=targetId?o.indexOf(targetId):o.length;
   o.splice(idx<0?o.length:idx,0,drag);
-  S.dashOrder=o; localStorage.setItem("dash_order",JSON.stringify(o)); renderContent();
+  S.dashOrder=o; localStorage.setItem("dash_order",JSON.stringify(o)); saveState(); renderContent();
 }
 function dashDrop(ev,targetId){ ev.preventDefault(); ev.stopPropagation(); reorderDash(targetId); }
 function dashDropEnd(ev){ ev.preventDefault(); reorderDash(null); }
-function resetDashOrder(){ S.dashOrder=[]; localStorage.removeItem("dash_order"); renderContent(); }
+function resetDashOrder(){ S.dashOrder=[]; localStorage.removeItem("dash_order"); saveState(); renderContent(); }
 
 // ===== INTEGRACIONES =====
 function integrationCard(o){
@@ -1290,6 +1297,46 @@ function exportCSV(){
   a.click();
 }
 
+// ===== ESTADO POR CUENTA EN LA BASE (Supabase) =====
+// Lee la fila del usuario y vuelca sus datos a S. Si no existe y hay datos locales, migra.
+async function loadState(){
+  if(!S.appUserId) return;
+  try{
+    const { data, error } = await supa.from("user_state").select("data").eq("user_id",S.appUserId).maybeSingle();
+    if(error){ console.warn("loadState",error.message); return; }
+    if(data && data.data && Object.keys(data.data).length){
+      const d=data.data;
+      if(d.productCosts) S.productCosts=d.productCosts;
+      if(Array.isArray(d.expenses)) S.expenses=d.expenses;
+      if(typeof d.percepcionesPct==="number") S.percepcionesPct=d.percepcionesPct;
+      if(typeof d.publiManual==="number") S.publiManual=d.publiManual;
+      if(Array.isArray(d.dashOrder)) S.dashOrder=d.dashOrder;
+      if(d.meli){ S.token=d.meli.token||null; S.refreshToken=d.meli.refreshToken||null; S.tokenExp=d.meli.tokenExp||0; S.userId=d.meli.userId||null; S.nickname=d.meli.nickname||null; }
+      else { S.token=null; S.refreshToken=null; S.userId=null; S.nickname=null; }
+    }else{
+      // Sin fila en la base: si hay datos locales (usuario original), migrarlos
+      if(Object.keys(S.productCosts||{}).length || (S.expenses||[]).length || S.token){ await saveState(true); }
+    }
+  }catch(e){ console.warn("loadState",e); }
+}
+
+let _saveTimer=null;
+function saveState(now){
+  clearTimeout(_saveTimer);
+  const doSave=async()=>{
+    if(!S.appUserId) return;
+    const data={
+      productCosts:S.productCosts||{}, expenses:S.expenses||[],
+      percepcionesPct:S.percepcionesPct||0, publiManual:S.publiManual||0, dashOrder:S.dashOrder||[],
+      meli: S.token?{token:S.token,refreshToken:S.refreshToken,tokenExp:S.tokenExp,userId:S.userId,nickname:S.nickname}:null,
+    };
+    try{ await supa.from("user_state").upsert({user_id:S.appUserId,data,updated_at:new Date().toISOString()}); }
+    catch(e){ console.warn("saveState",e); }
+  };
+  if(now) return doSave();
+  _saveTimer=setTimeout(doSave, 700); // debounce: agrupa cambios seguidos
+}
+
 let _booted=false;
 // Decide qué mostrar según la sesión de la app (Supabase)
 async function boot(){
@@ -1297,7 +1344,9 @@ async function boot(){
   try{ session=(await supa.auth.getSession()).data.session; }catch(e){}
   if(!session){ S.appUser=null; renderAuth(); return; }   // sin cuenta → login/registro
   S.appUser = session.user?.email || "Mi cuenta";
+  S.appUserId = session.user?.id || null;
   const firstTime = !_booted; _booted=true;
+  if(firstTime){ await loadState(); }                      // hidratar S desde la base (una vez)
   renderShell();
   renderContent();
   if(firstTime && S.token) loadAllOrders();               // MeLi conectado → traer ventas (una vez)
