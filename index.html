@@ -223,6 +223,28 @@ function loadExpenses(){
   }));
 }
 function saveExpenses(){localStorage.setItem("fixed_expenses",JSON.stringify(S.expenses));saveState();}
+function normalizePatrimonio(p){
+  p=p||{};
+  return{
+    stockBasis:p.stockBasis==="venta"?"venta":"costo",   // cómo valuar el stock: al costo (conservador) o a precio de venta
+    items:(Array.isArray(p.items)?p.items:[]).map(i=>({
+      id:i.id||(Date.now()+Math.floor(Math.random()*1000)),
+      kind:i.kind==="pasivo"?"pasivo":"activo",
+      category:i.category||"Otros",
+      name:i.name||"",
+      amount:parseFloat(i.amount)||0,
+    })),
+    snapshots:(Array.isArray(p.snapshots)?p.snapshots:[]).map(s=>({
+      date:s.date||today(), stock:parseFloat(s.stock)||0,
+      activos:parseFloat(s.activos)||0, pasivos:parseFloat(s.pasivos)||0, neto:parseFloat(s.neto)||0,
+    })),
+  };
+}
+function loadPatrimonio(){
+  let p={}; try{p=JSON.parse(localStorage.getItem("patrimonio")||"{}");}catch(e){p={};}
+  return normalizePatrimonio(p);
+}
+function savePatrimonio(){localStorage.setItem("patrimonio",JSON.stringify(S.patrimonio));saveState();}
 
 const S = {
   // Cuenta de la app (Supabase)
@@ -265,6 +287,8 @@ const S = {
   rankChartInstance: null,
   productCosts: loadCosts(),
   expenses: loadExpenses(),
+  patrimonio: loadPatrimonio(),
+  patChartInstance: null,
   darkMode: localStorage.getItem("darkMode")==="true",
   dashOrder: (()=>{try{return JSON.parse(localStorage.getItem("dash_order")||"[]");}catch(e){return[];}})(),
   debugOrder: null,
@@ -296,6 +320,7 @@ function toggleTheme(){
     const stats = S.orders.length?getStats():null;
     if(stats) setTimeout(()=>renderCharts(stats),50);
   }
+  if(S.patChartInstance) setTimeout(renderPatChart,50);
 }
 
 function fmt(n){
@@ -430,13 +455,13 @@ async function loadAdvertising(){
 async function loadAllItems(){
   if(!S.token) return;
   await ensureToken();
-  S.itemsLoading=true; if(S.page==="products") renderContent();
+  S.itemsLoading=true; if(S.page==="products"||S.page==="patrimonio") renderContent();
   try{
     const data = await apiFn("items",{token:S.token,user_id:S.userId});
     S.allItems = data.items||[];
   }catch(e){ S.allItems=[]; }
   S.itemsLoading=false;
-  if(S.page==="products") renderContent();
+  if(S.page==="products"||S.page==="patrimonio") renderContent();
 }
 
 // Trae una página de órdenes con reintentos y backoff (no rompe la carga si una falla)
@@ -819,6 +844,10 @@ function renderShell(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 6v12a2 2 0 002 2h14a2 2 0 002-2V6M3 6l2-3h14l2 3M9 11h6"/></svg>
         Gastos
       </div>
+      <div class="nav-item" data-page="patrimonio" onclick="setPage('patrimonio')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M4 21V10m4 11V10m8 11V10m4 11V10M2 10l10-6 10 6M12 7h.01"/></svg>
+        Patrimonio
+      </div>
       <div class="sidebar-bottom">
         <button class="theme-toggle" onclick="toggleTheme()">
           <span>${S.darkMode?"Modo claro":"Modo oscuro"}</span>
@@ -839,8 +868,8 @@ function setPage(p){
   S.page=p;
   document.querySelectorAll(".nav-item").forEach(el=>el.classList.toggle("active",el.dataset.page===p));
   renderContent();
-  // Al entrar a Productos, cargar todas las publicaciones si aún no se cargaron
-  if(p==="products" && S.token && !S.allItems.length && !S.itemsLoading) loadAllItems();
+  // Al entrar a Productos o Patrimonio, cargar todas las publicaciones si aún no se cargaron (para valuar stock)
+  if((p==="products"||p==="patrimonio") && S.token && !S.allItems.length && !S.itemsLoading) loadAllItems();
 }
 
 function renderContent(){
@@ -851,6 +880,7 @@ function renderContent(){
   else if(S.page==="orders") renderOrders(el);
   else if(S.page==="products") renderProducts(el);
   else if(S.page==="expenses") renderExpenses(el);
+  else if(S.page==="patrimonio") renderPatrimonio(el);
 }
 
 function loadingMsg(base){
@@ -1353,6 +1383,169 @@ function renderExpenses(el){
     </div>`;
 }
 
+// ===== CÁLCULO PATRIMONIAL =====
+const PAT_ACTIVO_CATS=["Caja / Efectivo","Mercado Pago","Banco","Dólares / Inversiones","Mercadería en camino","Deudas por cobrar","Rodados / Equipos","Otros"];
+const PAT_PASIVO_CATS=["Proveedores","Tarjeta de crédito","Préstamos","Impuestos por pagar","Otros"];
+
+// Valúa el stock de MeLi: unidades × costo cargado en Productos, y también a precio de venta como referencia
+function getStockValuation(){
+  let units=0, costo=0, venta=0, sinCosto=0;
+  S.allItems.forEach(it=>{
+    const q=it.available_quantity||0;
+    if(q<=0) return;
+    units+=q;
+    venta+=q*(it.price||0);
+    const c=getProductCost(it.id,it.title);
+    if(c>0) costo+=q*c; else sinCosto++;
+  });
+  return {units,costo,venta,sinCosto};
+}
+
+function getPatrimonioTotals(){
+  const stk=getStockValuation();
+  const stockVal = S.patrimonio.stockBasis==="venta" ? stk.venta : stk.costo;
+  let actMan=0, pas=0;
+  S.patrimonio.items.forEach(i=>{ if(i.kind==="pasivo") pas+=i.amount; else actMan+=i.amount; });
+  return {stk, stockVal, actMan, activos:stockVal+actMan, pasivos:pas, neto:stockVal+actMan-pas};
+}
+
+function addPatItem(kind){
+  S.patrimonio.items.push({id:Date.now(),kind:kind||"activo",category:kind==="pasivo"?"Proveedores":"Caja / Efectivo",name:"",amount:0});
+  savePatrimonio(); renderContent();
+}
+function updatePatItem(id,field,val,rerender){
+  const it=S.patrimonio.items.find(i=>i.id===id); if(!it) return;
+  it[field]=field==="amount"?(parseFloat(val)||0):val;
+  savePatrimonio(); if(rerender) renderContent();
+}
+function deletePatItem(id){
+  S.patrimonio.items=S.patrimonio.items.filter(i=>i.id!==id);
+  savePatrimonio(); renderContent();
+}
+function setStockBasis(b){ S.patrimonio.stockBasis=b; savePatrimonio(); renderContent(); }
+
+// Guarda una "foto" del patrimonio de hoy (si ya hay una de hoy, la pisa)
+function takePatSnapshot(){
+  const t=getPatrimonioTotals();
+  const snap={date:today(),stock:t.stockVal,activos:t.activos,pasivos:t.pasivos,neto:t.neto};
+  S.patrimonio.snapshots=S.patrimonio.snapshots.filter(s=>s.date!==snap.date);
+  S.patrimonio.snapshots.push(snap);
+  S.patrimonio.snapshots.sort((a,b)=>a.date.localeCompare(b.date));
+  savePatrimonio(); renderContent();
+}
+function deletePatSnapshot(date){
+  S.patrimonio.snapshots=S.patrimonio.snapshots.filter(s=>s.date!==date);
+  savePatrimonio(); renderContent();
+}
+
+function renderPatChart(){
+  if(S.patChartInstance){S.patChartInstance.destroy();S.patChartInstance=null;}
+  const ctx=document.getElementById("chartPatrimonio");
+  const snaps=S.patrimonio.snapshots;
+  if(!ctx||snaps.length<2) return;
+  const c=getChartColors();
+  S.patChartInstance=new Chart(ctx,{
+    type:"line",
+    data:{labels:snaps.map(s=>s.date.slice(5)),datasets:[
+      {label:"Patrimonio neto",data:snaps.map(s=>s.neto),borderColor:c.green,backgroundColor:c.greenBg,borderWidth:2,fill:true,tension:.3,pointRadius:3},
+      {label:"Activos",data:snaps.map(s=>s.activos),borderColor:c.blue,backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],tension:.3,pointRadius:2},
+      {label:"Pasivos",data:snaps.map(s=>s.pasivos),borderColor:S.darkMode?"#f87171":"#dc2626",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],tension:.3,pointRadius:2},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:c.tick,font:{size:11,family:"Inter"},boxWidth:12}}},scales:{x:{ticks:{color:c.tick,font:{size:10}},grid:{color:c.grid}},y:{ticks:{color:c.tick,font:{size:10},callback:v=>"$"+(Math.abs(v)>=1000?(v/1000).toFixed(0)+"k":v)},grid:{color:c.grid}}}}
+  });
+}
+
+function patItemRow(i){
+  const cats=i.kind==="pasivo"?PAT_PASIVO_CATS:PAT_ACTIVO_CATS;
+  return`<tr>
+    <td>
+      <select onchange="updatePatItem(${i.id},'category',this.value,false)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;outline:none">
+        ${cats.map(c=>`<option ${i.category===c?"selected":""}>${c}</option>`).join("")}
+      </select>
+    </td>
+    <td><input type="text" value="${(i.name||"").replace(/"/g,"&quot;")}" placeholder="${i.kind==="pasivo"?"Ej. Deuda proveedor X...":"Ej. Cuenta MP, caja chica..."}" onchange="updatePatItem(${i.id},'name',this.value,false)" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;width:180px;outline:none"></td>
+    <td class="r">
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:3px">
+        <span style="font-size:11px;color:var(--text3)">$</span>
+        <input class="cost-input" style="width:110px" type="number" value="${i.amount||""}" placeholder="0" min="0" step="1" onchange="updatePatItem(${i.id},'amount',this.value,true)">
+      </div>
+    </td>
+    <td class="r"><button onclick="deletePatItem(${i.id})" title="Eliminar" style="background:none;border:none;color:var(--red-text);cursor:pointer;font-size:16px;padding:2px 6px">🗑</button></td>
+  </tr>`;
+}
+
+function renderPatrimonio(el){
+  if(S.itemsLoading){el.innerHTML=`<div class="loading-wrap"><div class="spinner"></div>Cargando publicaciones para valuar el stock...</div>`;return;}
+  const t=getPatrimonioTotals();
+  const activos=S.patrimonio.items.filter(i=>i.kind!=="pasivo");
+  const pasivos=S.patrimonio.items.filter(i=>i.kind==="pasivo");
+  const snaps=S.patrimonio.snapshots;
+  const prev=snaps.length>=2?snaps[snaps.length-2]:(snaps.length===1&&snaps[0].date!==today()?snaps[0]:null);
+  const delta=prev?t.neto-prev.neto:null;
+
+  el.innerHTML=`
+    <div class="page-header"><div><div class="page-title">Patrimonio</div><div class="page-sub">Cuánto vale tu negocio hoy: stock + activos − deudas · guardá fotos para ver la evolución</div></div></div>
+    <div class="metrics-grid">
+      <div class="metric" style="border-top-color:var(--blue,#3b82f6)"><div class="metric-label">Stock valuado (${S.patrimonio.stockBasis==="venta"?"a precio de venta":"al costo"})</div><div class="metric-value">${fmt(t.stockVal)}</div><div class="metric-sub">${t.stk.units} unidades · ${S.patrimonio.stockBasis==="venta"?"al costo: "+fmt(t.stk.costo):"a precio de venta: "+fmt(t.stk.venta)}</div></div>
+      <div class="metric" style="border-top-color:var(--green)"><div class="metric-label">Activos totales</div><div class="metric-value" style="color:var(--green-text)">${fmt(t.activos)}</div><div class="metric-sub">stock ${fmt(t.stockVal)} + otros ${fmt(t.actMan)}</div></div>
+      <div class="metric" style="border-top-color:var(--red)"><div class="metric-label">Pasivos (deudas)</div><div class="metric-value" style="color:var(--red-text)">${fmt(t.pasivos)}</div><div class="metric-sub">${pasivos.length} deuda${pasivos.length===1?"":"s"} cargada${pasivos.length===1?"":"s"}</div></div>
+      <div class="metric" style="border-top-color:${t.neto>=0?"var(--green)":"var(--red)"}"><div class="metric-label">Patrimonio neto</div><div class="metric-value" style="color:${t.neto>=0?"var(--green-text)":"var(--red-text)"}">${fmt(t.neto)}</div><div class="metric-sub">${delta!==null?(delta>=0?"▲ +":"▼ ")+fmt(delta)+" vs foto anterior":"activos − pasivos"}</div></div>
+    </div>
+    <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <span>💡 El stock se valúa solo con las <b>unidades publicadas en MeLi × el costo</b> que cargaste en Productos y Costos${t.stk.sinCosto>0?` · ⚠️ <b>${t.stk.sinCosto}</b> publicación${t.stk.sinCosto===1?"":"es"} con stock <b>sin costo cargado</b> (no suman)`:""}. Lo demás (plata, deudas) lo cargás a mano acá abajo.</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select onchange="setStockBasis(this.value)" title="Cómo valuar el stock" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;outline:none">
+          <option value="costo" ${S.patrimonio.stockBasis!=="venta"?"selected":""}>Stock al costo</option>
+          <option value="venta" ${S.patrimonio.stockBasis==="venta"?"selected":""}>Stock a precio de venta</option>
+        </select>
+        <button class="btn-primary" style="white-space:nowrap;padding:6px 14px;font-size:13px" onclick="takePatSnapshot()">📸 Guardar foto de hoy</button>
+      </div>
+    </div>
+    ${!S.token&&!S.allItems.length?`<div class="info-box">🔗 Conectá Mercado Libre en <b>Integraciones</b> para valuar tu stock automáticamente. Mientras tanto podés cargar activos y pasivos a mano.</div>`:""}
+    <div class="table-wrap">
+      <div class="table-header"><span class="table-title">▸ Otros activos (plata y bienes, sin contar el stock)</span><button class="btn-primary" style="padding:5px 12px;font-size:12px" onclick="addPatItem('activo')">+ Activo</button></div>
+      ${!activos.length?`<div class="empty">Sin activos manuales. Ej.: plata en Mercado Pago, banco, efectivo, mercadería en camino.<br><button class="btn-primary" style="margin-top:12px" onclick="addPatItem('activo')">+ Agregar activo</button></div>`:`
+      <table>
+        <thead><tr><th>Categoría</th><th>Detalle</th><th class="r">Monto</th><th></th></tr></thead>
+        <tbody>${activos.map(patItemRow).join("")}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border2);font-weight:700"><td colspan="2" class="text">TOTAL OTROS ACTIVOS</td><td class="r pos">${fmt(t.actMan)}</td><td></td></tr></tfoot>
+      </table>`}
+    </div>
+    <div class="table-wrap">
+      <div class="table-header"><span class="table-title">▸ Pasivos (lo que debés)</span><button class="btn-primary" style="padding:5px 12px;font-size:12px;background:var(--red)" onclick="addPatItem('pasivo')">+ Pasivo</button></div>
+      ${!pasivos.length?`<div class="empty">Sin deudas cargadas. Ej.: proveedores, tarjeta, préstamos.<br><button class="btn-primary" style="margin-top:12px;background:var(--red)" onclick="addPatItem('pasivo')">+ Agregar pasivo</button></div>`:`
+      <table>
+        <thead><tr><th>Categoría</th><th>Detalle</th><th class="r">Monto</th><th></th></tr></thead>
+        <tbody>${pasivos.map(patItemRow).join("")}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border2);font-weight:700"><td colspan="2" class="text">TOTAL PASIVOS</td><td class="r neg">${fmt(-t.pasivos)}</td><td></td></tr></tfoot>
+      </table>`}
+    </div>
+    <div class="table-wrap">
+      <div class="table-header"><span class="table-title">▸ Evolución · ${snaps.length} foto${snaps.length===1?"":"s"}</span></div>
+      ${!snaps.length?`<div class="empty">Todavía no guardaste ninguna foto.<br>Tocá <b>📸 Guardar foto de hoy</b> cada tanto (ej. una vez por semana) y acá vas a ver si tu negocio crece o se achica.</div>`:`
+      ${snaps.length>=2?`<div style="padding:16px;height:240px"><canvas id="chartPatrimonio"></canvas></div>`:""}
+      <table>
+        <thead><tr><th>Fecha</th><th class="r">Stock</th><th class="r">Activos</th><th class="r">Pasivos</th><th class="r">Patrimonio neto</th><th class="r">Variación</th><th></th></tr></thead>
+        <tbody>
+          ${snaps.slice().reverse().map((s,idx,arr)=>{
+            const ant=arr[idx+1];
+            const d=ant?s.neto-ant.neto:null;
+            return`<tr>
+              <td class="text">${s.date}</td>
+              <td class="r neutral">${fmt(s.stock)}</td>
+              <td class="r pos">${fmt(s.activos)}</td>
+              <td class="r ${s.pasivos>0?"neg":"neutral"}">${s.pasivos>0?fmt(-s.pasivos):"—"}</td>
+              <td class="r ${s.neto>=0?"pos":"neg"}" style="font-weight:700">${fmt(s.neto)}</td>
+              <td class="r ${d===null?"neutral":d>=0?"pos":"neg"}">${d===null?"—":(d>=0?"▲ +":"▼ ")+fmt(d)}</td>
+              <td class="r"><button onclick="deletePatSnapshot('${s.date}')" title="Eliminar foto" style="background:none;border:none;color:var(--red-text);cursor:pointer;font-size:16px;padding:2px 6px">🗑</button></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`}
+    </div>`;
+  setTimeout(renderPatChart,30);
+}
+
 function prevPage(){if(S.offset>0){S.offset=Math.max(0,S.offset-PAGE_SIZE);renderContent();}}
 function nextPage(){S.offset+=PAGE_SIZE;renderContent();}
 
@@ -1381,6 +1574,7 @@ async function loadState(){
       const d=data.data;
       if(d.productCosts) S.productCosts=d.productCosts;
       if(Array.isArray(d.expenses)) S.expenses=d.expenses;
+      if(d.patrimonio) S.patrimonio=normalizePatrimonio(d.patrimonio);
       if(typeof d.percepcionesPct==="number") S.percepcionesPct=d.percepcionesPct;
       if(typeof d.publiManual==="number") S.publiManual=d.publiManual;
       if(Array.isArray(d.dashOrder)) S.dashOrder=d.dashOrder;
@@ -1390,7 +1584,7 @@ async function loadState(){
       S.mp = d.mp||null;
     }else{
       // Sin fila en la base: si hay datos locales (usuario original), migrarlos
-      if(Object.keys(S.productCosts||{}).length || (S.expenses||[]).length || S.token){ await saveState(true); }
+      if(Object.keys(S.productCosts||{}).length || (S.expenses||[]).length || S.token || (S.patrimonio?.items||[]).length || (S.patrimonio?.snapshots||[]).length){ await saveState(true); }
     }
   }catch(e){ console.warn("loadState",e); }
 }
@@ -1402,6 +1596,7 @@ function saveState(now){
     if(!S.appUserId) return;
     const data={
       productCosts:S.productCosts||{}, expenses:S.expenses||[],
+      patrimonio:S.patrimonio||null,
       percepcionesPct:S.percepcionesPct||0, publiManual:S.publiManual||0, dashOrder:S.dashOrder||[],
       meli: S.token?{token:S.token,refreshToken:S.refreshToken,tokenExp:S.tokenExp,userId:S.userId,nickname:S.nickname}:null,
       shopify: S.shopify||null,
