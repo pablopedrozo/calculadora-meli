@@ -197,7 +197,7 @@ section.listado h2 span{font-size:12px; color:var(--ink2); font-weight:500}
   <div id="result">
     <div class="help">
       <h2>¿Qué etiqueta miro?</h2>
-      <p>Usá la etiqueta de <b style="color:var(--ink)">Mercado Envíos</b> — la que tiene el código de barras y el <b style="color:var(--ink)">Número de envío de 11 dígitos</b> que empieza con <span class="tagnum mono">478…</span>. Escaneala con el botón azul o tipeá los <b style="color:var(--ink)">últimos 5 números</b>.</p>
+      <p>Usá la etiqueta de <b style="color:var(--ink)">Mercado Envíos</b> — la que tiene el código de barras. El número impreso <b style="color:var(--ink)">debajo del código de barras</b> es el número de envío (11 dígitos, empieza con <span class="tagnum mono">478…</span>): escanealo con el botón azul o tipeá sus <b style="color:var(--ink)">últimos 5 números</b>.</p>
       <p>También sirve el número de bulto <span class="tagnum mono">1229782800-XX</span> de la otra etiqueta: tipeá solo el <span class="tagnum mono">XX</span> (1 a 55).</p>
     </div>
   </div>
@@ -226,6 +226,7 @@ section.listado h2 span{font-size:12px; color:var(--ink2); font-weight:500}
 <div id="filereader" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <script>
 const TALLES = {JMSH43965:"S", ZDPH98888:"M", QOOR46082:"L", YRXY40208:"XL", YMZO64945:"XXL"};
 const ORDEN = ["S","M","L","XL","XXL"];
@@ -427,21 +428,123 @@ document.getElementById("btnphoto").addEventListener("click",()=>{
   if(scanner){ scanner.stop().catch(()=>{}); scanner=null; }
   photoin.click();
 });
+/* --- decodificación de foto: multi-variante (recortes + rotaciones +
+       binarizados), con ZXing TRY_HARDER, BarcodeDetector nativo y
+       html5-qrcode como última red --- */
+async function loadBitmap(file){
+  if(window.createImageBitmap){
+    try{ return await createImageBitmap(file); }catch(e){}
+  }
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file), im=new Image();
+    im.onload=()=>{ URL.revokeObjectURL(url); res(im); };
+    im.onerror=rej; im.src=url;
+  });
+}
+function makeCanvas(bmp,crop,rot,maxW){
+  const [sx,sy,sw,sh]=crop;
+  const scale=Math.min(1,maxW/(rot%180===90?sh:sw));
+  const dw=Math.round(sw*scale), dh=Math.round(sh*scale);
+  const c=document.createElement("canvas");
+  if(rot%180===90){ c.width=dh; c.height=dw; } else { c.width=dw; c.height=dh; }
+  const ctx=c.getContext("2d");
+  ctx.save();
+  ctx.translate(c.width/2,c.height/2);
+  ctx.rotate(rot*Math.PI/180);
+  ctx.drawImage(bmp,sx,sy,sw,sh,-dw/2,-dh/2,dw,dh);
+  ctx.restore();
+  return c;
+}
+function zxingReader(){
+  const Z=window.ZXing; if(!Z) return null;
+  const hints=new Map();
+  hints.set(Z.DecodeHintType.TRY_HARDER,true);
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,[
+    Z.BarcodeFormat.CODE_128,Z.BarcodeFormat.ITF,Z.BarcodeFormat.CODE_39,
+    Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.QR_CODE,Z.BarcodeFormat.DATA_MATRIX,Z.BarcodeFormat.PDF_417
+  ]);
+  const r=new Z.MultiFormatReader(); r.setHints(hints); return r;
+}
+function zxingTry(rdr,canvas){
+  const Z=window.ZXing;
+  const src=new Z.HTMLCanvasElementLuminanceSource(canvas);
+  for(const Bin of [Z.HybridBinarizer,Z.GlobalHistogramBinarizer]){
+    try{ return rdr.decode(new Z.BinaryBitmap(new Bin(src))).getText(); }
+    catch(e){}
+    finally{ try{rdr.reset();}catch(e){} }
+  }
+  return null;
+}
+let nativeDet=null;
+if("BarcodeDetector" in window){
+  try{ nativeDet=new BarcodeDetector({formats:["qr_code","code_128","itf","ean_13","data_matrix","pdf417"]}); }
+  catch(e){ try{ nativeDet=new BarcodeDetector(); }catch(e2){} }
+}
+async function nativeTry(canvas){
+  if(!nativeDet) return null;
+  try{ const r=await nativeDet.detect(canvas); return r&&r.length?r[0].rawValue:null; }
+  catch(e){ return null; }
+}
+function looksLikeHit(text){
+  const runs=text.match(/\d{6,}/g)||[];
+  return runs.some(run=>BULTOS.some(b=>b.envio.includes(run.slice(-11))||run.includes(b.envio)||b.envio.includes(run)));
+}
+async function html5Try(canvas){
+  try{
+    const blob=await new Promise(res=>canvas.toBlob(res,"image/png"));
+    if(!blob) return null;
+    const fr=new Html5Qrcode("filereader");
+    try{ return await fr.scanFile(new File([blob],"v.png",{type:"image/png"}),false); }
+    finally{ try{fr.clear();}catch(e){} }
+  }catch(e){ return null; }
+}
+async function decodePhoto(file,onStep){
+  const bmp=await loadBitmap(file);
+  const W=bmp.width,H=bmp.height;
+  const crops=[
+    [0,0,W,H],
+    [0,Math.round(H*0.25),W,Math.round(H*0.5)],
+    [0,0,W,Math.round(H*0.55)],
+    [0,Math.round(H*0.45),W,Math.round(H*0.55)],
+    [Math.round(W*0.1),Math.round(H*0.1),Math.round(W*0.8),Math.round(H*0.8)]
+  ];
+  const rdr=zxingReader();
+  let best=null, step=0, total=crops.length*2;
+  for(const rot of [0,90]){
+    for(const crop of crops){
+      step++; onStep(step,total);
+      for(const maxW of [1700,1000]){
+        const c=makeCanvas(bmp,crop,rot,maxW);
+        let t=await nativeTry(c);
+        if(!t&&rdr) t=zxingTry(rdr,c);
+        if(t){
+          if(looksLikeHit(t)) return t;
+          best=best||t;
+        }
+      }
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  if(!rdr&&!best){
+    const c=makeCanvas(bmp,[0,0,W,H],0,1400);
+    best=await html5Try(c);
+    if(!best) best=await html5Try(makeCanvas(bmp,[0,0,W,H],90,1400));
+  }
+  return best;
+}
 photoin.addEventListener("change",async()=>{
   const file=photoin.files&&photoin.files[0];
   photoin.value="";
   if(!file) return;
   scanwrap.hidden=false;
   reader.classList.add("off");
-  scanmsg.textContent="Leyendo la foto…";
+  scanmsg.textContent="Analizando la foto…";
   try{
-    const fr=new Html5Qrcode("filereader");
-    const text=await fr.scanFile(file,false);
-    fr.clear();
-    closeScanner();
-    handleScan(text);
+    const text=await decodePhoto(file,(s,t)=>{ scanmsg.textContent="Analizando la foto… ("+s+"/"+t+")"; });
+    if(text){ closeScanner(); handleScan(text); return; }
+    scanmsg.textContent="No pude leer el código en esta foto. Probá de nuevo: código de barras HORIZONTAL, ocupando casi todo el ancho, cámara firme y sin sombra — o mejor apuntá al QR chico de la etiqueta. Si no sale, tipeá los últimos 5 números impresos debajo del código de barras.";
   }catch(err){
-    scanmsg.textContent="No encontré un código legible en la foto. Sacala de nuevo más cerca del QR o código de barras, sin sombra. Si no sale, tipeá los últimos 5 números del envío.";
+    scanmsg.textContent="No pude procesar la foto ("+(err&&err.message?err.message:err)+"). Tipeá los últimos 5 números impresos debajo del código de barras.";
   }
 });
 function handleScan(text){
