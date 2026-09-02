@@ -89,17 +89,26 @@
   .panel h2 b { color: var(--ink); }
 
   .drop {
-    border: 2px dashed var(--line); border-radius: 8px; min-height: 150px;
+    border: 2px dashed var(--line); border-radius: 8px; min-height: 130px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 8px; padding: 12px; cursor: pointer; text-align: center; color: var(--ink-soft);
     transition: border-color .15s, background .15s;
   }
   .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
-  .drop:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   .drop img { max-width: 100%; max-height: 180px; border-radius: 4px; }
   .drop .hint { font-size: 13px; }
-  .drop .hint strong { color: var(--accent); }
   .badge-example { font-size: 11px; color: var(--warn); background: var(--warn-soft); border-radius: 4px; padding: 2px 8px; align-self: flex-start; }
+  .btnrow { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--accent); border-radius: 8px; padding: 10px 8px;
+    font-size: 14px; font-weight: 600; color: var(--accent); background: var(--surface);
+    cursor: pointer; user-select: none; text-align: center;
+  }
+  .btn.primary { background: var(--accent); color: var(--surface); }
+  .btn:active { background: var(--accent-soft); color: var(--accent); }
+  .btn:focus-within, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .sr { position: absolute; width: 1px; height: 1px; opacity: 0.01; overflow: hidden; pointer-events: none; }
 
   .result { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 14px; }
   .result .fmt { font-size: 11px; color: var(--ink-soft); font-family: "IBM Plex Sans", system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -133,21 +142,25 @@
   <div class="panels">
     <section class="panel" id="panelA">
       <h2><b>A</b> · Etiqueta original</h2>
-      <div class="drop" id="dropA" tabindex="0" role="button" aria-label="Cargar imagen A">
-        <span class="hint"><strong>Elegí una foto</strong> o arrastrala acá</span>
-        <span class="hint">También podés sacarla con la cámara</span>
+      <div class="drop" id="dropA">
+        <span class="hint">Arrastrá una imagen acá o usá los botones</span>
       </div>
-      <input type="file" id="fileA" accept="image/*" hidden>
+      <div class="btnrow">
+        <label class="btn primary">📷 Cámara<input class="sr" type="file" id="camA" accept="image/*" capture="environment"></label>
+        <label class="btn">Galería / archivo<input class="sr" type="file" id="fileA" accept="image/*"></label>
+      </div>
       <div class="result pending" id="resA"><div class="fmt">&nbsp;</div><div class="value">Sin imagen</div></div>
     </section>
 
     <section class="panel" id="panelB">
       <h2><b>B</b> · Foto del paquete</h2>
-      <div class="drop" id="dropB" tabindex="0" role="button" aria-label="Cargar imagen B">
-        <span class="hint"><strong>Elegí una foto</strong> o arrastrala acá</span>
-        <span class="hint">También podés sacarla con la cámara</span>
+      <div class="drop" id="dropB">
+        <span class="hint">Arrastrá una imagen acá o usá los botones</span>
       </div>
-      <input type="file" id="fileB" accept="image/*" capture="environment" hidden>
+      <div class="btnrow">
+        <label class="btn primary">📷 Cámara<input class="sr" type="file" id="camB" accept="image/*" capture="environment"></label>
+        <label class="btn">Galería / archivo<input class="sr" type="file" id="fileB" accept="image/*"></label>
+      </div>
       <div class="result pending" id="resB"><div class="fmt">&nbsp;</div><div class="value">Sin imagen</div></div>
     </section>
   </div>
@@ -173,15 +186,40 @@
     return new Promise(function (resolve, reject) {
       var img = new Image();
       img.onload = function () { resolve(img); };
-      img.onerror = function () { reject(new Error("No se pudo abrir la imagen.")); };
+      img.onerror = function () { reject(new Error("No se pudo abrir la imagen. Si es una foto HEIC de iPhone, probá con una captura de pantalla o cambiá la cámara a formato 'Más compatible'.")); };
       img.src = src;
     });
   }
 
+  // Fuente decodificable a partir de un File: ImageBitmap con orientación EXIF
+  // aplicada cuando el navegador lo soporta; si no, un <img> desde dataURL.
+  function loadSourceFromFile(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: "from-image" })
+        .catch(function () { return createImageBitmap(file); })
+        .catch(function () { return fileToDataURL(file).then(loadImage); });
+    }
+    return fileToDataURL(file).then(loadImage);
+  }
+
+  function fileToDataURL(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = function () { reject(new Error("No se pudo leer el archivo.")); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function sizeOf(img) {
+    return { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+  }
+
   function canvasFrom(img, maxSide, rotationDeg) {
-    var scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
-    var w = Math.max(1, Math.round(img.naturalWidth * scale));
-    var h = Math.max(1, Math.round(img.naturalHeight * scale));
+    var d = sizeOf(img);
+    var scale = Math.min(1, maxSide / Math.max(d.w, d.h));
+    var w = Math.max(1, Math.round(d.w * scale));
+    var h = Math.max(1, Math.round(d.h * scale));
     var rot = ((rotationDeg % 360) + 360) % 360;
     var canvas = document.createElement("canvas");
     if (rot === 90 || rot === 270) { canvas.width = h; canvas.height = w; }
@@ -309,24 +347,32 @@
     drop.appendChild(img);
   }
 
-  function processSource(slot, src, isExample) {
-    showPreview(slot, src, isExample);
+  function decodeAndReport(slot, sourcePromise) {
     setResult(slot, { pending: true });
-    loadImage(src)
+    sourcePromise
       .then(decodeRobust)
       .then(function (r) { setResult(slot, { format: formatName(r), text: r.getText() }); })
       .catch(function (e) { setResult(slot, { error: e.message }); });
   }
 
+  function processSource(slot, src, isExample) {
+    showPreview(slot, src, isExample);
+    decodeAndReport(slot, loadImage(src));
+  }
+
+  function readFile(slot, file) {
+    fileToDataURL(file).then(function (src) { showPreview(slot, src, false); }).catch(function () {});
+    decodeAndReport(slot, loadSourceFromFile(file));
+  }
+
   function wire(slot) {
     var drop = el("drop" + slot);
-    var input = el("file" + slot);
-    function pick() { input.click(); }
-    drop.addEventListener("click", pick);
-    drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
-    input.addEventListener("change", function () {
-      if (input.files && input.files[0]) readFile(slot, input.files[0]);
-      input.value = "";
+    ["file" + slot, "cam" + slot].forEach(function (id) {
+      var input = el(id);
+      input.addEventListener("change", function () {
+        if (input.files && input.files[0]) readFile(slot, input.files[0]);
+        input.value = "";
+      });
     });
     drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", function () { drop.classList.remove("over"); });
@@ -336,13 +382,6 @@
       var f = e.dataTransfer.files && e.dataTransfer.files[0];
       if (f) readFile(slot, f);
     });
-  }
-
-  function readFile(slot, file) {
-    var fr = new FileReader();
-    fr.onload = function () { processSource(slot, fr.result, false); };
-    fr.onerror = function () { setResult(slot, { error: "No se pudo leer el archivo." }); };
-    fr.readAsDataURL(file);
   }
 
   // Pegar una imagen (Ctrl+V) va al primer slot vacío.
