@@ -164,6 +164,8 @@ section.listado h2 span{font-size:12px; color:var(--ink2); font-weight:500}
 #reader{width:min(92vw,420px); border-radius:14px; overflow:hidden; background:#000}
 #scanmsg{color:#DCE6E0; font-size:14px; text-align:center; max-width:340px}
 .btn-close{border:1px solid #5A6B63; background:transparent; color:#fff; border-radius:12px; padding:12px 26px; font-family:inherit; font-weight:800; font-size:15px; cursor:pointer}
+.btn-photo{border:none; background:#FFFFFF; color:#17241D; border-radius:12px; padding:14px 26px; font-family:inherit; font-weight:800; font-size:16px; cursor:pointer}
+#reader.off{display:none}
 @media (prefers-reduced-motion:reduce){ .bar i{transition:none} }
 </style>
 
@@ -217,8 +219,11 @@ section.listado h2 span{font-size:12px; color:var(--ink2); font-weight:500}
 <div id="scanwrap" hidden>
   <div id="reader"></div>
   <div id="scanmsg">Apuntá al código de barras o QR de la etiqueta de Mercado Envíos.</div>
+  <button class="btn-photo" id="btnphoto" type="button">📷 Sacar foto de la etiqueta</button>
   <button class="btn-close" id="btnclose" type="button">Cerrar</button>
 </div>
+<input type="file" id="photoin" accept="image/*" capture="environment" hidden>
+<div id="filereader" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script>
@@ -381,27 +386,64 @@ helpTmpl.id="helpTmpl";
 helpTmpl.innerHTML=result.innerHTML;
 document.body.appendChild(helpTmpl);
 
-/* ------- escáner ------- */
+/* ------- escáner -------
+   La cámara en vivo (getUserMedia) está bloqueada dentro del visor de
+   artifacts en iOS: ahí caemos a "sacar foto" con la cámara nativa y
+   decodificamos el código desde la imagen. */
 const scanwrap=document.getElementById("scanwrap");
 const scanmsg=document.getElementById("scanmsg");
-let scanner=null;
-document.getElementById("btnscan").addEventListener("click",async()=>{
+const reader=document.getElementById("reader");
+const photoin=document.getElementById("photoin");
+let scanner=null, liveBlocked=false;
+try{ liveBlocked=sessionStorage.getItem("cam-blocked")==="1"; }catch(e){}
+
+document.getElementById("btnscan").addEventListener("click",()=>{
+  if(liveBlocked){ photoin.click(); return; }
   scanwrap.hidden=false;
+  reader.classList.remove("off");
   scanmsg.textContent="Apuntá al código de barras o QR de la etiqueta de Mercado Envíos.";
   try{
     scanner=new Html5Qrcode("reader");
-    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:160}},
+    scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:160}},
       text=>{ handleScan(text); closeScanner(); },
-      ()=>{});
-  }catch(err){
-    scanmsg.textContent="No pude abrir la cámara ("+(err&&err.message?err.message:err)+"). Cerrá y tipeá los últimos 5 números del envío a mano.";
-  }
+      ()=>{})
+    .catch(()=>fallbackToPhoto());
+  }catch(err){ fallbackToPhoto(); }
 });
+function fallbackToPhoto(){
+  liveBlocked=true;
+  try{ sessionStorage.setItem("cam-blocked","1"); }catch(e){}
+  if(scanner){ scanner.stop().catch(()=>{}); scanner=null; }
+  reader.classList.add("off");
+  scanmsg.textContent="Acá la cámara en vivo está bloqueada, pero podés sacarle una foto a la etiqueta y la leo igual. Enfocá de cerca el código de barras o el QR, con buena luz.";
+}
 function closeScanner(){
   scanwrap.hidden=true;
+  reader.classList.remove("off");
   if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); scanner=null; }
 }
 document.getElementById("btnclose").addEventListener("click",closeScanner);
+document.getElementById("btnphoto").addEventListener("click",()=>{
+  if(scanner){ scanner.stop().catch(()=>{}); scanner=null; }
+  photoin.click();
+});
+photoin.addEventListener("change",async()=>{
+  const file=photoin.files&&photoin.files[0];
+  photoin.value="";
+  if(!file) return;
+  scanwrap.hidden=false;
+  reader.classList.add("off");
+  scanmsg.textContent="Leyendo la foto…";
+  try{
+    const fr=new Html5Qrcode("filereader");
+    const text=await fr.scanFile(file,false);
+    fr.clear();
+    closeScanner();
+    handleScan(text);
+  }catch(err){
+    scanmsg.textContent="No encontré un código legible en la foto. Sacala de nuevo más cerca del QR o código de barras, sin sombra. Si no sale, tipeá los últimos 5 números del envío.";
+  }
+});
 function handleScan(text){
   const runs=(text.match(/\d{6,}/g)||[]).sort((a,b)=>b.length-a.length);
   for(const run of runs){
