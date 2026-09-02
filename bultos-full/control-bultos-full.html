@@ -1,0 +1,419 @@
+<title>Control de Bultos Full</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=IBM+Plex+Mono:wght@500;700&display=swap">
+<style>
+:root{
+  --bg:#F1F4F2; --surface:#FFFFFF; --surface2:#E7ECE9;
+  --ink:#182420; --ink2:#5A6B63; --line:#D4DCD7;
+  --accent:#2F5AA8; --accent-ink:#FFFFFF;
+  --ok:#1E7A46; --ok-bg:#E3F3E9; --ok-line:#8FC9A8; --ok-ink:#135834;
+  --warn:#B07C00; --warn-bg:#FFF3D0; --warn-line:#E8C560; --warn-ink:#6E4E00;
+  --bad:#B3382C; --bad-bg:#FBE7E4; --bad-line:#E3A198; --bad-ink:#87261D;
+  --chip-done:#1E7A46;
+  --shadow:0 10px 30px rgba(24,36,32,.10);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#131917; --surface:#1C2422; --surface2:#242E2B;
+    --ink:#E8EEEA; --ink2:#93A49C; --line:#33403B;
+    --accent:#7FA4E8; --accent-ink:#0E1626;
+    --ok:#4FBF7F; --ok-bg:#16301F; --ok-line:#2C6B45; --ok-ink:#A5E4C0;
+    --warn:#E8B33C; --warn-bg:#332A10; --warn-line:#7A651F; --warn-ink:#F2D488;
+    --bad:#E8776A; --bad-bg:#3A1B17; --bad-line:#8A4038; --bad-ink:#F4B4AA;
+    --chip-done:#4FBF7F;
+    --shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#131917; --surface:#1C2422; --surface2:#242E2B;
+  --ink:#E8EEEA; --ink2:#93A49C; --line:#33403B;
+  --accent:#7FA4E8; --accent-ink:#0E1626;
+  --ok:#4FBF7F; --ok-bg:#16301F; --ok-line:#2C6B45; --ok-ink:#A5E4C0;
+  --warn:#E8B33C; --warn-bg:#332A10; --warn-line:#7A651F; --warn-ink:#F2D488;
+  --bad:#E8776A; --bad-bg:#3A1B17; --bad-line:#8A4038; --bad-ink:#F4B4AA;
+  --chip-done:#4FBF7F;
+  --shadow:0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.45; margin:0;
+  -webkit-text-size-adjust:100%;
+}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.wrap{max-width:560px; margin:0 auto; padding:0 14px 56px}
+header.app{
+  position:sticky; top:0; z-index:20; background:var(--bg);
+  padding:14px 0 10px; border-bottom:1px solid var(--line);
+}
+.brand{display:flex; align-items:baseline; justify-content:space-between; gap:8px}
+.brand h1{font-size:19px; font-weight:800; letter-spacing:-.01em; margin:0}
+.brand .retiro{font-size:12px; color:var(--ink2); letter-spacing:.06em}
+.searchrow{display:flex; gap:8px; margin-top:10px}
+#q{
+  flex:1; min-width:0; border:2px solid var(--line); border-radius:12px;
+  background:var(--surface); color:var(--ink);
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-weight:700;
+  font-size:20px; padding:12px 14px; letter-spacing:.04em;
+}
+#q::placeholder{color:var(--ink2); font-weight:500; font-size:15px; letter-spacing:0; font-family:"Archivo",sans-serif}
+#q:focus{outline:none; border-color:var(--accent)}
+.btn-scan{
+  border:none; border-radius:12px; background:var(--accent); color:var(--accent-ink);
+  font-family:inherit; font-weight:800; font-size:14px; padding:0 16px; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; line-height:1.1;
+}
+.btn-scan svg{width:22px;height:22px}
+.btn-scan:focus-visible,#q:focus-visible,button:focus-visible{outline:3px solid var(--accent); outline-offset:2px}
+.progress{display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px; color:var(--ink2)}
+.bar{flex:1; height:6px; border-radius:3px; background:var(--surface2); overflow:hidden}
+.bar i{display:block; height:100%; background:var(--chip-done); border-radius:3px; transition:width .3s}
+.progress b{color:var(--ink); font-variant-numeric:tabular-nums}
+
+main{padding-top:16px; display:flex; flex-direction:column; gap:16px}
+#result{scroll-margin-top:190px}
+
+/* helper card */
+.help{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px}
+.help h2{margin:0 0 8px; font-size:15px; font-weight:800}
+.help p{margin:0 0 8px; font-size:14px; color:var(--ink2)}
+.help p:last-child{margin-bottom:0}
+.help .tagnum{background:var(--surface2); border-radius:6px; padding:1px 7px; font-weight:700; font-size:13px; color:var(--ink)}
+
+/* result */
+.card{border-radius:16px; box-shadow:var(--shadow); overflow:hidden; border:2px solid var(--line); background:var(--surface)}
+.card.ok{border-color:var(--ok-line)}
+.card.warn{border-color:var(--warn-line)}
+.card.bad{border-color:var(--bad-line)}
+.band{padding:14px 16px; display:flex; align-items:center; gap:12px}
+.card.ok .band{background:var(--ok-bg); color:var(--ok-ink)}
+.card.warn .band{background:var(--warn-bg); color:var(--warn-ink)}
+.card.bad .band{background:var(--bad-bg); color:var(--bad-ink)}
+.band .icon{font-size:26px; line-height:1}
+.band .msg{font-weight:800; font-size:16px; letter-spacing:.01em}
+.band .sub{font-size:13px; font-weight:500; margin-top:1px}
+.card-head{padding:16px 16px 4px; display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
+.card-head .bn{font-size:34px; font-weight:800; letter-spacing:-.02em; line-height:1}
+.card-head .meta{text-align:right; font-size:12px; color:var(--ink2); line-height:1.5}
+.card-head .meta .mono{color:var(--ink); font-weight:700}
+.rows{padding:8px 16px 0; display:flex; flex-direction:column}
+.row{display:flex; align-items:center; gap:14px; padding:12px 0; border-top:1px solid var(--line)}
+.row:first-child{border-top:none}
+.talle{
+  min-width:64px; height:56px; border-radius:12px; display:flex; align-items:center; justify-content:center;
+  font-family:"IBM Plex Mono",monospace; font-weight:700; font-size:26px; letter-spacing:.02em;
+  background:var(--surface2); color:var(--ink); padding:0 8px;
+}
+.row.norow .talle{background:var(--bad-bg); color:var(--bad-ink)}
+.row .info{flex:1; min-width:0}
+.row .lbl{font-weight:600; font-size:14px}
+.row.norow .lbl{color:var(--bad)}
+.row .code{font-size:12px; color:var(--ink2); letter-spacing:.05em}
+.row .units{font-family:"IBM Plex Mono",monospace; font-weight:700; font-size:26px; white-space:nowrap; font-variant-numeric:tabular-nums}
+.row .units small{font-size:14px; font-weight:500; color:var(--ink2)}
+.total{display:flex; justify-content:space-between; align-items:center; margin:8px 16px 0; padding:12px 0; border-top:2px solid var(--ink); font-weight:800}
+.total .units{font-family:"IBM Plex Mono",monospace; font-size:22px; font-variant-numeric:tabular-nums}
+.card-actions{padding:14px 16px 16px}
+.btn-check{
+  width:100%; border:none; border-radius:12px; padding:14px; cursor:pointer;
+  background:var(--ink); color:var(--bg); font-family:inherit; font-weight:800; font-size:15px;
+}
+.btn-check.done{background:var(--ok-bg); color:var(--ok-ink); border:1px solid var(--ok-line)}
+
+/* candidate list & notices */
+.notice{background:var(--surface); border:1px dashed var(--line); border-radius:14px; padding:14px 16px; font-size:14px; color:var(--ink2)}
+.cands{display:flex; flex-direction:column; gap:8px}
+.cand{
+  display:flex; justify-content:space-between; align-items:center; gap:10px; width:100%;
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+  font-family:inherit; font-size:15px; color:var(--ink); cursor:pointer; text-align:left;
+}
+.cand b{font-weight:800}
+.cand .mono{font-size:12px; color:var(--ink2)}
+.cand .dot{width:10px; height:10px; border-radius:50%; flex:none}
+.dot.g{background:var(--ok)} .dot.y{background:var(--warn)} .dot.r{background:var(--bad)}
+
+/* full list */
+section.listado h2{font-size:15px; font-weight:800; margin:4px 0 10px; display:flex; justify-content:space-between; align-items:baseline}
+section.listado h2 span{font-size:12px; color:var(--ink2); font-weight:500}
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px}
+.chip{
+  display:flex; flex-direction:column; gap:3px; text-align:left;
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:10px 12px;
+  font-family:inherit; color:var(--ink); cursor:pointer;
+}
+.chip .top{display:flex; justify-content:space-between; align-items:center; gap:6px}
+.chip .top b{font-size:15px; font-weight:800}
+.chip .tick{font-size:13px; color:var(--chip-done); font-weight:800; visibility:hidden}
+.chip.rev{border-color:var(--ok-line); background:var(--ok-bg)}
+.chip.rev .tick{visibility:visible}
+.chip .sizes{font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:700; color:var(--ink2); letter-spacing:.02em}
+.chip .u{font-size:11px; color:var(--ink2)}
+
+/* legend footer */
+.legend{font-size:12px; color:var(--ink2); border-top:1px solid var(--line); padding-top:12px; display:flex; flex-direction:column; gap:5px}
+.legend b{color:var(--ink)}
+
+/* scanner overlay */
+#scanwrap[hidden]{display:none!important}
+#scanwrap{
+  position:fixed; inset:0; z-index:50; background:rgba(10,14,12,.94);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:20px;
+}
+#reader{width:min(92vw,420px); border-radius:14px; overflow:hidden; background:#000}
+#scanmsg{color:#DCE6E0; font-size:14px; text-align:center; max-width:340px}
+.btn-close{border:1px solid #5A6B63; background:transparent; color:#fff; border-radius:12px; padding:12px 26px; font-family:inherit; font-weight:800; font-size:15px; cursor:pointer}
+@media (prefers-reduced-motion:reduce){ .bar i{transition:none} }
+</style>
+
+<div class="wrap">
+<header class="app">
+  <div class="brand">
+    <h1>Control de Bultos Full</h1>
+    <div class="retiro mono">RETIRO 12297828</div>
+  </div>
+  <div class="searchrow">
+    <input id="q" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false"
+      placeholder="N° de envío, bulto (1–55) o código" aria-label="Buscar bulto por número de envío, número de bulto o código">
+    <button class="btn-scan" id="btnscan" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/>
+        <path d="M7 12h1M11 12h2M16 12h1"/>
+      </svg>
+      Escanear
+    </button>
+  </div>
+  <div class="progress">
+    <span>Revisadas</span>
+    <div class="bar"><i id="pbar" style="width:0%"></i></div>
+    <b id="pnum">0 / 55</b>
+  </div>
+</header>
+
+<main>
+  <div id="result">
+    <div class="help">
+      <h2>¿Qué etiqueta miro?</h2>
+      <p>Usá la etiqueta de <b style="color:var(--ink)">Mercado Envíos</b> — la que tiene el código de barras y el <b style="color:var(--ink)">Número de envío de 11 dígitos</b> que empieza con <span class="tagnum mono">478…</span>. Escaneala con el botón azul o tipeá los <b style="color:var(--ink)">últimos 5 números</b>.</p>
+      <p>También sirve el número de bulto <span class="tagnum mono">1229782800-XX</span> de la otra etiqueta: tipeá solo el <span class="tagnum mono">XX</span> (1 a 55).</p>
+    </div>
+  </div>
+
+  <section class="listado">
+    <h2>Los 55 bultos <span>tocá uno para ver el detalle</span></h2>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <div class="legend">
+    <div><b style="color:var(--ok)">● Verde</b> — la bolsa trae un solo talle.</div>
+    <div><b style="color:var(--warn)">● Amarillo</b> — ¡ojo! hay más de un talle en la misma bolsa.</div>
+    <div><b style="color:var(--bad)">● Rojo</b> — unidades devueltas con problemas (no aptas para vender).</div>
+    <div>Producto: Espaldera Corrector De Postura Posturemax · Entregas 28/08 y 31/08 · 783 u. aptas + 4 no aptas.</div>
+  </div>
+</main>
+</div>
+
+<div id="scanwrap" hidden>
+  <div id="reader"></div>
+  <div id="scanmsg">Apuntá al código de barras o QR de la etiqueta de Mercado Envíos.</div>
+  <button class="btn-close" id="btnclose" type="button">Cerrar</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+const TALLES = {JMSH43965:"S", ZDPH98888:"M", QOOR46082:"L", YRXY40208:"XL", YMZO64945:"XXL"};
+const ORDEN = ["S","M","L","XL","XXL"];
+const BULTOS = [{"items":[{"c":"YMZO64945","u":13,"ok":true},{"c":"JMSH43965","u":5,"ok":true},{"c":"YRXY40208","u":23,"ok":true}],"id":"1229782800-1","n":1,"envio":"47858962971","fecha":"28/08"},{"items":[{"c":"JMSH43965","u":21,"ok":true}],"id":"1229782800-2","n":2,"envio":"47860867404","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":1,"ok":true},{"c":"YRXY40208","u":17,"ok":true}],"id":"1229782800-3","n":3,"envio":"47861655028","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":11,"ok":true},{"c":"JMSH43965","u":8,"ok":true}],"id":"1229782800-4","n":4,"envio":"47861704056","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":8,"ok":true},{"c":"JMSH43965","u":1,"ok":true},{"c":"YMZO64945","u":9,"ok":true},{"c":"YRXY40208","u":1,"ok":true},{"c":"ZDPH98888","u":5,"ok":true}],"id":"1229782800-5","n":5,"envio":"47861456031","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":4,"ok":true},{"c":"YMZO64945","u":1,"ok":true},{"c":"YRXY40208","u":2,"ok":true},{"c":"ZDPH98888","u":6,"ok":true}],"id":"1229782800-6","n":6,"envio":"47861786722","fecha":"28/08"},{"items":[{"c":"YRXY40208","u":14,"ok":true},{"c":"QOOR46082","u":3,"ok":true},{"c":"JMSH43965","u":1,"ok":true}],"id":"1229782800-7","n":7,"envio":"47861582109","fecha":"28/08"},{"items":[{"c":"JMSH43965","u":8,"ok":true}],"id":"1229782800-8","n":8,"envio":"47861974455","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":24,"ok":true}],"id":"1229782800-9","n":9,"envio":"47861978793","fecha":"28/08"},{"items":[{"c":"YRXY40208","u":14,"ok":true}],"id":"1229782800-10","n":10,"envio":"47862292382","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":18,"ok":true}],"id":"1229782800-11","n":11,"envio":"47862357736","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":5,"ok":true}],"id":"1229782800-12","n":12,"envio":"47862077213","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":13,"ok":true}],"id":"1229782800-13","n":13,"envio":"47862093617","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":17,"ok":true}],"id":"1229782800-14","n":14,"envio":"47862380350","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":12,"ok":true}],"id":"1229782800-15","n":15,"envio":"47862108267","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":6,"ok":true}],"id":"1229782800-16","n":16,"envio":"47862116253","fecha":"28/08"},{"items":[{"c":"YRXY40208","u":17,"ok":true}],"id":"1229782800-17","n":17,"envio":"47862434444","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"YRXY40208","u":7,"ok":true},{"c":"QOOR46082","u":8,"ok":true},{"c":"ZDPH98888","u":4,"ok":true}],"id":"1229782800-18","n":18,"envio":"47862190575","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"YRXY40208","u":17,"ok":true}],"id":"1229782800-19","n":19,"envio":"47862458502","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":12,"ok":true},{"c":"QOOR46082","u":9,"ok":true},{"c":"YRXY40208","u":2,"ok":true}],"id":"1229782800-20","n":20,"envio":"47862202105","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":2,"ok":true},{"c":"JMSH43965","u":1,"ok":true},{"c":"YRXY40208","u":4,"ok":true},{"c":"QOOR46082","u":3,"ok":true}],"id":"1229782800-21","n":21,"envio":"47862525216","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":4,"ok":true},{"c":"QOOR46082","u":2,"ok":true},{"c":"JMSH43965","u":1,"ok":true},{"c":"YRXY40208","u":3,"ok":true}],"id":"1229782800-22","n":22,"envio":"47862539868","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":3,"ok":true},{"c":"QOOR46082","u":3,"ok":true},{"c":"YRXY40208","u":4,"ok":true}],"id":"1229782800-23","n":23,"envio":"47862311669","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"YRXY40208","u":2,"ok":true},{"c":"QOOR46082","u":6,"ok":true},{"c":"ZDPH98888","u":1,"ok":true}],"id":"1229782800-24","n":24,"envio":"47862329261","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":2,"ok":true}],"id":"1229782800-25","n":25,"envio":"47863646163","fecha":"28/08"},{"items":[{"c":"JMSH43965","u":1,"ok":true}],"id":"1229782800-26","n":26,"envio":"47863931344","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":11,"ok":true},{"c":"YRXY40208","u":3,"ok":true},{"c":"JMSH43965","u":1,"ok":true}],"id":"1229782800-27","n":27,"envio":"47863998162","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":8,"ok":true}],"id":"1229782800-28","n":28,"envio":"47865588930","fecha":"28/08"},{"items":[{"c":"YRXY40208","u":17,"ok":true}],"id":"1229782800-29","n":29,"envio":"47865383175","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":11,"ok":true}],"id":"1229782800-30","n":30,"envio":"47865464881","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"ZDPH98888","u":10,"ok":true}],"id":"1229782800-31","n":31,"envio":"47865473973","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":8,"ok":true},{"c":"JMSH43965","u":2,"ok":true}],"id":"1229782800-32","n":32,"envio":"47865767196","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"QOOR46082","u":4,"ok":true},{"c":"JMSH43965","u":3,"ok":true}],"id":"1229782800-33","n":33,"envio":"47865493889","fecha":"28/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"JMSH43965","u":13,"ok":true},{"c":"ZDPH98888","u":2,"ok":true}],"id":"1229782800-34","n":34,"envio":"47865845572","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":5,"ok":true},{"c":"YRXY40208","u":1,"ok":true},{"c":"JMSH43965","u":1,"ok":true}],"id":"1229782800-35","n":35,"envio":"47865560005","fecha":"28/08"},{"items":[{"c":"YRXY40208","u":14,"ok":true}],"id":"1229782800-36","n":36,"envio":"47865572631","fecha":"28/08"},{"items":[{"c":"ZDPH98888","u":5,"ok":true}],"id":"1229782800-37","n":37,"envio":"47865572705","fecha":"28/08"},{"items":[{"c":"QOOR46082","u":12,"ok":true}],"id":"1229782800-38","n":38,"envio":"47866104422","fecha":"28/08"},{"items":[{"c":"JMSH43965","u":1,"ok":true},{"c":"YMZO64945","u":1,"ok":true},{"c":"QOOR46082","u":3,"ok":true},{"c":"ZDPH98888","u":7,"ok":true}],"id":"1229782800-39","n":39,"envio":"47867325007","fecha":"31/08"},{"items":[{"c":"QOOR46082","u":8,"ok":true},{"c":"YRXY40208","u":2,"ok":true}],"id":"1229782800-40","n":40,"envio":"47867776198","fecha":"31/08"},{"items":[{"c":"YMZO64945","u":8,"ok":true},{"c":"JMSH43965","u":1,"ok":true},{"c":"YRXY40208","u":1,"ok":true},{"c":"QOOR46082","u":5,"ok":true},{"c":"ZDPH98888","u":6,"ok":true}],"id":"1229782800-41","n":41,"envio":"47868054424","fecha":"31/08"},{"items":[{"c":"QOOR46082","u":21,"ok":true},{"c":"YMZO64945","u":4,"ok":true},{"c":"YRXY40208","u":6,"ok":true},{"c":"ZDPH98888","u":11,"ok":true}],"id":"1229782800-42","n":42,"envio":"47867814729","fecha":"31/08"},{"items":[{"c":"QOOR46082","u":4,"ok":true},{"c":"YRXY40208","u":3,"ok":true},{"c":"JMSH43965","u":1,"ok":true}],"id":"1229782800-43","n":43,"envio":"47867812239","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":4,"ok":true},{"c":"JMSH43965","u":1,"ok":true}],"id":"1229782800-44","n":44,"envio":"47867817395","fecha":"31/08"},{"items":[{"c":"YMZO64945","u":1,"ok":true},{"c":"QOOR46082","u":11,"ok":true},{"c":"ZDPH98888","u":4,"ok":true}],"id":"1229782800-45","n":45,"envio":"47867885923","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":1,"ok":false}],"id":"1229782800-46","n":46,"envio":"47869128684","fecha":"31/08"},{"items":[{"c":"YMZO64945","u":23,"ok":true},{"c":"YRXY40208","u":1,"ok":true}],"id":"1229782800-47","n":47,"envio":"47869088295","fecha":"31/08"},{"items":[{"c":"YRXY40208","u":15,"ok":true},{"c":"QOOR46082","u":1,"ok":true}],"id":"1229782800-48","n":48,"envio":"47869218403","fecha":"31/08"},{"items":[{"c":"QOOR46082","u":2,"ok":true},{"c":"YRXY40208","u":2,"ok":true},{"c":"YMZO64945","u":23,"ok":true},{"c":"ZDPH98888","u":1,"ok":true}],"id":"1229782800-49","n":49,"envio":"47869510170","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":1,"ok":true},{"c":"YRXY40208","u":3,"ok":true}],"id":"1229782800-50","n":50,"envio":"47869247021","fecha":"31/08"},{"items":[{"c":"QOOR46082","u":1,"ok":false}],"id":"1229782800-51","n":51,"envio":"47870075348","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":32,"ok":true}],"id":"1229782800-52","n":52,"envio":"47870847312","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":32,"ok":true}],"id":"1229782800-53","n":53,"envio":"47870590423","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":7,"ok":true}],"id":"1229782800-54","n":54,"envio":"47870599783","fecha":"31/08"},{"items":[{"c":"ZDPH98888","u":2,"ok":false}],"id":"1229782800-55","n":55,"envio":"47870847777","fecha":"31/08"}];
+
+BULTOS.forEach(b=>{
+  b.items.sort((a,x)=>ORDEN.indexOf(TALLES[a.c])-ORDEN.indexOf(TALLES[x.c]));
+  b.talles=[...new Set(b.items.map(i=>TALLES[i.c]))];
+  b.total=b.items.reduce((s,i)=>s+i.u,0);
+  b.noAptas=b.items.filter(i=>!i.ok).reduce((s,i)=>s+i.u,0);
+});
+const byN=n=>BULTOS.find(b=>b.n===n);
+
+/* ------- revisadas (solo en este teléfono) ------- */
+const LSKEY="ctrl-bultos-12297828";
+function getRev(){ try{return JSON.parse(localStorage.getItem(LSKEY))||{}}catch(e){return {}} }
+function setRev(o){ try{localStorage.setItem(LSKEY,JSON.stringify(o))}catch(e){} }
+function paintProgress(){
+  const c=Object.keys(getRev()).length;
+  document.getElementById("pnum").textContent=c+" / 55";
+  document.getElementById("pbar").style.width=(c/55*100)+"%";
+}
+
+/* ------- render ------- */
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const result=document.getElementById("result");
+
+function statusOf(b){
+  if(b.noAptas>0) return "bad";
+  return b.talles.length>1?"warn":"ok";
+}
+function bandOf(b){
+  if(b.noAptas>0) return {icon:"⛔", msg:"Unidades NO aptas para vender", sub:"Devueltas con problemas — separar esta bolsa"};
+  if(b.talles.length>1) return {icon:"⚠️", msg:"¡Atención! "+b.talles.length+" talles en la misma bolsa", sub:"Separá por talle antes de guardar"};
+  return {icon:"✅", msg:"Un solo talle: "+b.talles[0], sub:"Bolsa uniforme, lista para ubicar"};
+}
+function cardHTML(b){
+  const st=statusOf(b), band=bandOf(b), rev=getRev()[b.n];
+  const rows=b.items.map(i=>`
+    <div class="row${i.ok?"":" norow"}">
+      <div class="talle">${TALLES[i.c]}</div>
+      <div class="info">
+        <div class="lbl">${i.ok?"Talle "+TALLES[i.c]:"NO APTA · talle "+TALLES[i.c]}</div>
+        <div class="code mono">${esc(i.c)}</div>
+      </div>
+      <div class="units">${i.u}<small> u.</small></div>
+    </div>`).join("");
+  return `
+  <div class="card ${st}">
+    <div class="band">
+      <div class="icon">${band.icon}</div>
+      <div><div class="msg">${band.msg}</div><div class="sub">${band.sub}</div></div>
+    </div>
+    <div class="card-head">
+      <div class="bn">Bulto ${b.n}</div>
+      <div class="meta">
+        Envío <span class="mono">${b.envio}</span><br>
+        ID <span class="mono">${b.id}</span> · llegó ${b.fecha}
+      </div>
+    </div>
+    <div class="rows">${rows}</div>
+    <div class="total"><span>Total de la bolsa</span><span class="units">${b.total} u.</span></div>
+    <div class="card-actions">
+      <button class="btn-check${rev?" done":""}" type="button" onclick="toggleRev(${b.n})">
+        ${rev?"✓ Revisada — tocar para desmarcar":"Marcar bolsa como revisada"}
+      </button>
+    </div>
+  </div>`;
+}
+function showBulto(n){
+  const b=byN(n); if(!b) return;
+  result.innerHTML=cardHTML(b);
+  paintGrid();
+  result.scrollIntoView({behavior:"smooth",block:"start"});
+}
+window.toggleRev=function(n){
+  const r=getRev();
+  if(r[n]) delete r[n]; else r[n]=Date.now();
+  setRev(r); paintProgress(); showBulto(n);
+};
+
+function paintGrid(){
+  const rev=getRev();
+  document.getElementById("grid").innerHTML=BULTOS.map(b=>{
+    const st=statusOf(b);
+    const sizes=b.items.map(i=>TALLES[i.c]+"×"+i.u).join(" · ");
+    return `<button class="chip${rev[b.n]?" rev":""}" type="button" onclick="showBulto(${b.n})">
+      <span class="top"><b>Bulto ${b.n}</b><span class="dot ${st==="ok"?"g":st==="warn"?"y":"r"}"></span><span class="tick">✓</span></span>
+      <span class="sizes">${sizes}</span>
+      <span class="u">${b.total} u. · …${b.envio.slice(-5)}</span>
+    </button>`;
+  }).join("");
+}
+window.showBulto=showBulto;
+
+/* ------- búsqueda automática ------- */
+function findMatches(raw){
+  const q=raw.trim().toUpperCase();
+  if(!q) return null;
+  const d=q.replace(/\D/g,"");
+  const hits=new Map();
+
+  const short=q.match(/^B?U?L?T?O?\s*#?(\d{1,2})$/);
+  if(short){ const n=+short[1]; if(n>=1&&n<=55) hits.set(n,byN(n)); }
+
+  if(d.length>=4){
+    for(const b of BULTOS){
+      const idd=b.id.replace(/\D/g,"");
+      if(b.envio.includes(d)||b.envio.endsWith(d)||idd.endsWith(d)||b.id===q) hits.set(b.n,b);
+    }
+    const idm=q.match(/1229782800[-\s]?0*(\d{1,2})/);
+    if(idm){ const n=+idm[1]; if(byN(n)) hits.set(n,byN(n)); }
+  }
+
+  if(/[A-Z]/.test(q)&&q.length>=4){
+    for(const c of Object.keys(TALLES)){
+      if(c.includes(q)||q.includes(c)){
+        for(const b of BULTOS) if(b.items.some(i=>i.c===c)) hits.set(b.n,b);
+        return {code:c, list:[...hits.values()]};
+      }
+    }
+  }
+  return {list:[...hits.values()]};
+}
+
+function runSearch(raw){
+  const r=findMatches(raw);
+  if(r===null){
+    result.innerHTML=document.getElementById("helpTmpl").innerHTML;
+    return;
+  }
+  const {list,code}=r;
+  if(list.length===1&&!code){ showBulto(list[0].n); return; }
+  if(list.length===0){
+    result.innerHTML=`<div class="notice">Sin coincidencias para <b class="mono">${esc(raw.trim())}</b>. Probá con los últimos 5 números del envío (<span class="mono">478…</span>) o el número de bulto (1–55).</div>`;
+    return;
+  }
+  const head=code?`<div class="notice" style="margin-bottom:8px">El código <b class="mono">${code}</b> es <b>TALLE ${TALLES[code]}</b>. Está en ${list.length} bultos:</div>`:
+    `<div class="notice" style="margin-bottom:8px">${list.length} bultos coinciden — tocá el tuyo:</div>`;
+  result.innerHTML=head+`<div class="cands">`+list.slice(0,12).map(b=>{
+    const st=statusOf(b);
+    return `<button class="cand" type="button" onclick="showBulto(${b.n})">
+      <span class="dot ${st==="ok"?"g":st==="warn"?"y":"r"}"></span>
+      <span style="flex:1"><b>Bulto ${b.n}</b> · ${b.talles.join(" + ")} · ${b.total} u.</span>
+      <span class="mono">…${b.envio.slice(-5)}</span>
+    </button>`;
+  }).join("")+`</div>`+(list.length>12?`<div class="notice" style="margin-top:8px">Hay más — tipeá más números para afinar.</div>`:"");
+}
+
+const input=document.getElementById("q");
+let deb;
+input.addEventListener("input",()=>{ clearTimeout(deb); deb=setTimeout(()=>runSearch(input.value),140); });
+input.addEventListener("keydown",e=>{ if(e.key==="Enter"){ clearTimeout(deb); runSearch(input.value); input.blur(); } });
+
+/* plantilla de ayuda para restaurar */
+const helpTmpl=document.createElement("template");
+helpTmpl.id="helpTmpl";
+helpTmpl.innerHTML=result.innerHTML;
+document.body.appendChild(helpTmpl);
+
+/* ------- escáner ------- */
+const scanwrap=document.getElementById("scanwrap");
+const scanmsg=document.getElementById("scanmsg");
+let scanner=null;
+document.getElementById("btnscan").addEventListener("click",async()=>{
+  scanwrap.hidden=false;
+  scanmsg.textContent="Apuntá al código de barras o QR de la etiqueta de Mercado Envíos.";
+  try{
+    scanner=new Html5Qrcode("reader");
+    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:160}},
+      text=>{ handleScan(text); closeScanner(); },
+      ()=>{});
+  }catch(err){
+    scanmsg.textContent="No pude abrir la cámara ("+(err&&err.message?err.message:err)+"). Cerrá y tipeá los últimos 5 números del envío a mano.";
+  }
+});
+function closeScanner(){
+  scanwrap.hidden=true;
+  if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); scanner=null; }
+}
+document.getElementById("btnclose").addEventListener("click",closeScanner);
+function handleScan(text){
+  const runs=(text.match(/\d{6,}/g)||[]).sort((a,b)=>b.length-a.length);
+  for(const run of runs){
+    for(let len=run.length; len>=6; len--){
+      const frag=run.slice(-len);
+      const hit=BULTOS.find(b=>b.envio.includes(frag)||b.id.replace(/\D/g,"").endsWith(frag));
+      if(hit){ input.value=frag; showBulto(hit.n); return; }
+    }
+  }
+  input.value=text.slice(0,24);
+  runSearch(input.value);
+}
+
+paintGrid(); paintProgress();
+</script>
