@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+<title>Verificador de Etiquetas</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --ink: #16202b;
+    --ink-soft: #5a6775;
+    --line: #d9dee5;
+    --accent: #1f5fd0;
+    --accent-soft: #e8eefb;
+    --ok: #177a45;
+    --ok-soft: #e6f4ec;
+    --bad: #b3261e;
+    --bad-soft: #faeae9;
+    --warn: #8a6100;
+    --warn-soft: #faf3df;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12181f;
+      --surface: #1a222c;
+      --ink: #e8edf2;
+      --ink-soft: #93a1af;
+      --line: #2e3944;
+      --accent: #6b9ce8;
+      --accent-soft: #1d2c42;
+      --ok: #4fc07f;
+      --ok-soft: #16301f;
+      --bad: #ef7b74;
+      --bad-soft: #3a1d1b;
+      --warn: #d9b25a;
+      --warn-soft: #33290f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12181f;
+    --surface: #1a222c;
+    --ink: #e8edf2;
+    --ink-soft: #93a1af;
+    --line: #2e3944;
+    --accent: #6b9ce8;
+    --accent-soft: #1d2c42;
+    --ok: #4fc07f;
+    --ok-soft: #16301f;
+    --bad: #ef7b74;
+    --bad-soft: #3a1d1b;
+    --warn: #d9b25a;
+    --warn-soft: #33290f;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }
+  header h1 {
+    font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  header p.sub { margin: 6px 0 0; color: var(--ink-soft); max-width: 62ch; }
+  .eyebrow {
+    display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 6px;
+  }
+
+  #verdict {
+    margin: 24px 0 0; padding: 14px 18px; border-radius: 8px;
+    font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 10px;
+  }
+  #verdict.idle { background: var(--surface); border: 1px dashed var(--line); color: var(--ink-soft); font-weight: 400; }
+  #verdict.ok { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok); }
+  #verdict.bad { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad); }
+  #verdict .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+  @media (max-width: 640px) { .panels { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .panel h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
+  .panel h2 b { color: var(--ink); }
+
+  .drop {
+    border: 2px dashed var(--line); border-radius: 8px; min-height: 150px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 12px; cursor: pointer; text-align: center; color: var(--ink-soft);
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .drop img { max-width: 100%; max-height: 180px; border-radius: 4px; }
+  .drop .hint { font-size: 13px; }
+  .drop .hint strong { color: var(--accent); }
+  .badge-example { font-size: 11px; color: var(--warn); background: var(--warn-soft); border-radius: 4px; padding: 2px 8px; align-self: flex-start; }
+
+  .result { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 14px; }
+  .result .fmt { font-size: 11px; color: var(--ink-soft); font-family: "IBM Plex Sans", system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.08em; }
+  .result .value { font-weight: 600; font-size: 18px; word-break: break-all; margin-top: 2px; }
+  .result.err .value { color: var(--bad); font-size: 14px; font-weight: 400; font-family: "IBM Plex Sans", system-ui, sans-serif; }
+  .result.pending .value { color: var(--ink-soft); font-weight: 400; }
+
+  .diff {
+    margin-top: 24px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .diff h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
+  .diff table { border-collapse: collapse; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 16px; }
+  .diff th { font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 11px; font-weight: 600; color: var(--ink-soft); text-align: left; padding: 2px 10px 2px 0; text-transform: uppercase; letter-spacing: 0.06em; }
+  .diff td { padding: 2px 3px; text-align: center; min-width: 1.2em; }
+  .diff td.match { background: var(--ok-soft); color: var(--ok); }
+  .diff td.mismatch { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
+  .note { margin-top: 20px; color: var(--ink-soft); font-size: 13px; max-width: 68ch; }
+  .note code { font-family: "IBM Plex Mono", ui-monospace, monospace; background: var(--accent-soft); border-radius: 3px; padding: 0 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Herramienta de despacho</span>
+    <h1>Verificador de etiquetas por código de barras</h1>
+    <p class="sub">Cargá la etiqueta original y la foto del paquete: la página decodifica ambos códigos (Code 128, EAN, QR) en tu navegador y confirma si el valor es idéntico. Las fotos no salen de tu dispositivo.</p>
+  </header>
+
+  <div id="verdict" class="idle" role="status"><span>Cargá las dos imágenes para comparar.</span></div>
+
+  <div class="panels">
+    <section class="panel" id="panelA">
+      <h2><b>A</b> · Etiqueta original</h2>
+      <div class="drop" id="dropA" tabindex="0" role="button" aria-label="Cargar imagen A">
+        <span class="hint"><strong>Elegí una foto</strong> o arrastrala acá</span>
+        <span class="hint">También podés sacarla con la cámara</span>
+      </div>
+      <input type="file" id="fileA" accept="image/*" hidden>
+      <div class="result pending" id="resA"><div class="fmt">&nbsp;</div><div class="value">Sin imagen</div></div>
+    </section>
+
+    <section class="panel" id="panelB">
+      <h2><b>B</b> · Foto del paquete</h2>
+      <div class="drop" id="dropB" tabindex="0" role="button" aria-label="Cargar imagen B">
+        <span class="hint"><strong>Elegí una foto</strong> o arrastrala acá</span>
+        <span class="hint">También podés sacarla con la cámara</span>
+      </div>
+      <input type="file" id="fileB" accept="image/*" capture="environment" hidden>
+      <div class="result pending" id="resB"><div class="fmt">&nbsp;</div><div class="value">Sin imagen</div></div>
+    </section>
+  </div>
+
+  <div class="diff" id="diff" hidden>
+    <h2>Comparación carácter por carácter</h2>
+    <div id="diffBody"></div>
+  </div>
+
+  <p class="note">Consejos para fotos difíciles: acercate hasta que el código ocupe la mayor parte del cuadro, evitá reflejos del film plástico y mantené las barras lo más horizontales posible. El decodificador prueba varias rotaciones y escalas automáticamente. La etiqueta de ejemplo precargada corresponde al SKU <code>YMZO64945</code>.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+(function () {
+  var REF_EXAMPLE = "data:image/png;base64,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";
+
+  var state = { A: null, B: null };
+
+  function el(id) { return document.getElementById(id); }
+
+  function loadImage(src) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(new Error("No se pudo abrir la imagen.")); };
+      img.src = src;
+    });
+  }
+
+  function canvasFrom(img, maxSide, rotationDeg) {
+    var scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    var w = Math.max(1, Math.round(img.naturalWidth * scale));
+    var h = Math.max(1, Math.round(img.naturalHeight * scale));
+    var rot = ((rotationDeg % 360) + 360) % 360;
+    var canvas = document.createElement("canvas");
+    if (rot === 90 || rot === 270) { canvas.width = h; canvas.height = w; }
+    else { canvas.width = w; canvas.height = h; }
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(rot * Math.PI / 180);
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    return canvas;
+  }
+
+  function decodeCanvas(canvas) {
+    var source = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+    var bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(source));
+    var reader = new ZXing.MultiFormatReader();
+    var hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    reader.setHints(hints);
+    return reader.decode(bitmap);
+  }
+
+  // Prueba combinaciones de escala y rotación hasta decodificar.
+  function decodeRobust(img) {
+    return new Promise(function (resolve, reject) {
+      var scales = [1600, 1000, 2400, 640];
+      var rotations = [0, 90, 180, 270];
+      var attempts = [];
+      scales.forEach(function (s) { rotations.forEach(function (r) { attempts.push([s, r]); }); });
+      var i = 0;
+      function next() {
+        if (i >= attempts.length) {
+          reject(new Error("No se detectó ningún código en la imagen. Probá con una foto más cercana y sin reflejos."));
+          return;
+        }
+        var a = attempts[i++];
+        try {
+          resolve(decodeCanvas(canvasFrom(img, a[0], a[1])));
+        } catch (e) {
+          setTimeout(next, 0); // no bloquear la UI entre intentos
+        }
+      }
+      next();
+    });
+  }
+
+  function formatName(result) {
+    var f = result.getBarcodeFormat();
+    var names = Object.keys(ZXing.BarcodeFormat).filter(function (k) { return ZXing.BarcodeFormat[k] === f; });
+    return (names[0] || String(f)).replace(/_/g, " ");
+  }
+
+  function setResult(slot, data) {
+    var box = el("res" + slot);
+    box.classList.remove("pending", "err");
+    if (data.error) {
+      box.classList.add("err");
+      box.innerHTML = '<div class="fmt">Error</div><div class="value"></div>';
+      box.querySelector(".value").textContent = data.error;
+      state[slot] = null;
+    } else if (data.pending) {
+      box.classList.add("pending");
+      box.innerHTML = '<div class="fmt">&nbsp;</div><div class="value">Decodificando…</div>';
+      state[slot] = null;
+    } else {
+      box.innerHTML = '<div class="fmt"></div><div class="value"></div>';
+      box.querySelector(".fmt").textContent = data.format;
+      box.querySelector(".value").textContent = data.text;
+      state[slot] = data.text;
+    }
+    updateVerdict();
+  }
+
+  function updateVerdict() {
+    var v = el("verdict");
+    var diff = el("diff");
+    if (state.A == null || state.B == null) {
+      v.className = "idle";
+      v.innerHTML = "<span>Cargá las dos imágenes para comparar.</span>";
+      diff.hidden = true;
+      return;
+    }
+    var same = state.A === state.B;
+    v.className = same ? "ok" : "bad";
+    v.innerHTML = '<span class="dot"></span><span></span>';
+    v.lastChild.textContent = same
+      ? "Coinciden al 100%: ambos códigos devuelven exactamente el mismo valor."
+      : "NO coinciden: los códigos devuelven valores distintos.";
+    renderDiff(state.A, state.B);
+    diff.hidden = false;
+  }
+
+  function renderDiff(a, b) {
+    var len = Math.max(a.length, b.length);
+    var rows = { A: [], B: [] };
+    for (var i = 0; i < len; i++) {
+      var ca = a[i] || "·", cb = b[i] || "·";
+      var cls = (a[i] === b[i]) ? "match" : "mismatch";
+      rows.A.push('<td class="' + cls + '"></td>');
+      rows.B.push('<td class="' + cls + '"></td>');
+    }
+    var html = "<table><tr><th>A</th>" + rows.A.join("") + "</tr><tr><th>B</th>" + rows.B.join("") + "</tr></table>";
+    var body = el("diffBody");
+    body.innerHTML = html;
+    var tds = body.querySelectorAll("td");
+    for (var j = 0; j < len; j++) {
+      tds[j].textContent = a[j] || "·";
+      tds[len + j].textContent = b[j] || "·";
+    }
+  }
+
+  function showPreview(slot, src, isExample) {
+    var drop = el("drop" + slot);
+    drop.innerHTML = "";
+    if (isExample) {
+      var badge = document.createElement("span");
+      badge.className = "badge-example";
+      badge.textContent = "Ejemplo precargado — reemplazalo por tu foto";
+      drop.appendChild(badge);
+    }
+    var img = document.createElement("img");
+    img.alt = "Imagen " + slot;
+    img.src = src;
+    drop.appendChild(img);
+  }
+
+  function processSource(slot, src, isExample) {
+    showPreview(slot, src, isExample);
+    setResult(slot, { pending: true });
+    loadImage(src)
+      .then(decodeRobust)
+      .then(function (r) { setResult(slot, { format: formatName(r), text: r.getText() }); })
+      .catch(function (e) { setResult(slot, { error: e.message }); });
+  }
+
+  function wire(slot) {
+    var drop = el("drop" + slot);
+    var input = el("file" + slot);
+    function pick() { input.click(); }
+    drop.addEventListener("click", pick);
+    drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    input.addEventListener("change", function () {
+      if (input.files && input.files[0]) readFile(slot, input.files[0]);
+      input.value = "";
+    });
+    drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", function () { drop.classList.remove("over"); });
+    drop.addEventListener("drop", function (e) {
+      e.preventDefault();
+      drop.classList.remove("over");
+      var f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) readFile(slot, f);
+    });
+  }
+
+  function readFile(slot, file) {
+    var fr = new FileReader();
+    fr.onload = function () { processSource(slot, fr.result, false); };
+    fr.onerror = function () { setResult(slot, { error: "No se pudo leer el archivo." }); };
+    fr.readAsDataURL(file);
+  }
+
+  // Pegar una imagen (Ctrl+V) va al primer slot vacío.
+  document.addEventListener("paste", function (e) {
+    var items = (e.clipboardData || {}).items || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") === 0) {
+        var slot = state.A == null ? "A" : "B";
+        readFile(slot, items[i].getAsFile());
+        e.preventDefault();
+        return;
+      }
+    }
+  });
+
+  wire("A");
+  wire("B");
+
+  if (typeof ZXing === "undefined") {
+    setResult("A", { error: "No se pudo cargar el decodificador (sin conexión al CDN)." });
+  } else {
+    processSource("A", REF_EXAMPLE, true);
+  }
+})();
+</script>
+
+</body>
+</html>
