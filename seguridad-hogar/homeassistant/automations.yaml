@@ -1,0 +1,152 @@
+# Lógica de la alarma.
+# Los nombres de entidades (binary_sensor.puerta_entrada_contact, etc.) salen del
+# "friendly name" que le pongas a cada sensor al emparejarlo en Zigbee2MQTT.
+# Usar exactamente estos nombres al emparejar: puerta_entrada, puerta_patio,
+# ventana_living, pir_living, sirena  (ver GUIA_INSTALACION.md, paso 6).
+
+# ---------- DISPARADORES ----------
+
+- id: disparo_por_apertura
+  alias: "Alarma - disparo por puerta o ventana"
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.puerta_entrada_contact
+        - binary_sensor.puerta_patio_contact
+        - binary_sensor.ventana_living_contact
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: alarm_control_panel.alarma_casa
+      state:
+        - armed_home
+        - armed_away
+  action:
+    - service: alarm_control_panel.alarm_trigger
+      target:
+        entity_id: alarm_control_panel.alarma_casa
+
+- id: disparo_por_movimiento_interior
+  alias: "Alarma - disparo por movimiento interior (solo modo ausente)"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.pir_living_occupancy
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: alarm_control_panel.alarma_casa
+      state: armed_away
+  action:
+    - service: alarm_control_panel.alarm_trigger
+      target:
+        entity_id: alarm_control_panel.alarma_casa
+
+- id: disparo_por_persona_en_camara
+  alias: "Alarma - disparo por persona detectada en cámara (solo modo ausente)"
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.frente_person_occupancy
+        - binary_sensor.patio_person_occupancy
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: alarm_control_panel.alarma_casa
+      state: armed_away
+  action:
+    - service: alarm_control_panel.alarm_trigger
+      target:
+        entity_id: alarm_control_panel.alarma_casa
+
+# ---------- REACCIÓN CUANDO SE DISPARA ----------
+
+- id: alarma_disparada
+  alias: "Alarma disparada - sirena, luces y aviso a todos"
+  trigger:
+    - platform: state
+      entity_id: alarm_control_panel.alarma_casa
+      to: triggered
+  action:
+    - service: switch.turn_on
+      target:
+        entity_id: switch.sirena
+    # Si hay luces inteligentes, descomentar:
+    # - service: light.turn_on
+    #   target:
+    #     entity_id: all
+    - service: notify.familia
+      data:
+        title: "🚨 ALARMA DISPARADA"
+        message: "Se detectó una intrusión en casa. Mirá las cámaras AHORA."
+        data:
+          image: /api/frigate/notifications/snapshot/person/latest.jpg
+          push:
+            sound:
+              name: default
+              critical: 1        # suena aunque el celular esté en silencio
+              volume: 1.0
+
+- id: alarma_desarmada
+  alias: "Alarma desarmada - apagar sirena"
+  trigger:
+    - platform: state
+      entity_id: alarm_control_panel.alarma_casa
+      to: disarmed
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.sirena
+    - service: notify.familia
+      data:
+        title: "✅ Alarma desarmada"
+        message: "La alarma fue desarmada."
+
+# ---------- AVISOS INFORMATIVOS (aun con alarma desarmada) ----------
+
+- id: aviso_persona_en_camara
+  alias: "Aviso - persona detectada en cámara (informativo)"
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.frente_person_occupancy
+        - binary_sensor.patio_person_occupancy
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: alarm_control_panel.alarma_casa
+      state: disarmed
+  action:
+    - service: notify.familia
+      data:
+        title: "👤 Persona detectada"
+        message: "Hay una persona en {{ trigger.to_state.attributes.friendly_name }}."
+        data:
+          image: /api/frigate/notifications/snapshot/person/latest.jpg
+  mode: single
+  max_exceeded: silent
+
+- id: aviso_puerta_abierta_al_armar
+  alias: "Aviso - puerta o ventana abierta al armar"
+  trigger:
+    - platform: state
+      entity_id: alarm_control_panel.alarma_casa
+      to:
+        - armed_home
+        - armed_away
+  condition:
+    - condition: or
+      conditions:
+        - condition: state
+          entity_id: binary_sensor.puerta_entrada_contact
+          state: "on"
+        - condition: state
+          entity_id: binary_sensor.puerta_patio_contact
+          state: "on"
+        - condition: state
+          entity_id: binary_sensor.ventana_living_contact
+          state: "on"
+  action:
+    - service: notify.familia
+      data:
+        title: "⚠️ Ojo"
+        message: "Armaste la alarma pero hay una puerta o ventana abierta."

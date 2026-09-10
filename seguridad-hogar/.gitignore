@@ -1,0 +1,9 @@
+# Datos propios y pesados que no van al repositorio
+.env
+grabaciones/
+homeassistant/*
+!homeassistant/configuration.yaml
+!homeassistant/automations.yaml
+!homeassistant/secrets.yaml
+zigbee2mqtt/*
+!zigbee2mqtt/configuration.yaml

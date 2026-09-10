@@ -1,0 +1,26 @@
+# Configuración de Zigbee2MQTT: conecta los sensores Sonoff y la sirena
+# a través del dongle USB Sonoff Zigbee 3.0.
+
+homeassistant:
+  enabled: true          # los sensores aparecen solos en Home Assistant
+
+mqtt:
+  server: mqtt://mosquitto:1883
+  base_topic: zigbee2mqtt
+
+serial:
+  port: /dev/ttyACM0
+  # Si el dongle es el modelo Plus-E, descomentar la línea siguiente:
+  # adapter: ember
+
+frontend:
+  enabled: true
+  port: 8081             # interfaz web para emparejar sensores: http://IP-DE-LA-PC:8081
+
+# Emparejamiento cerrado por defecto (seguridad).
+# Para agregar un sensor nuevo: activar "Permit join" desde la interfaz web.
+permit_join: false
+
+advanced:
+  network_key: GENERATE  # clave de red única, se genera sola la primera vez
+  channel: 15            # canal alejado del WiFi típico para evitar interferencia
