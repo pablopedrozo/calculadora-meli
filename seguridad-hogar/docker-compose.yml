@@ -1,0 +1,81 @@
+# Sistema de seguridad del hogar
+# Cuatro servicios que arrancan solos al prender la PC:
+#  - mosquitto:     mensajería interna (MQTT) que conecta todo
+#  - zigbee2mqtt:   habla con los sensores de puertas, movimiento y sirena
+#  - frigate:       graba las cámaras y detecta personas con IA
+#  - homeassistant: el cerebro - alarma, automatizaciones y app del celular
+#
+# Antes de levantar: leer docs/GUIA_INSTALACION.md y completar el archivo .env
+# Levantar todo:   docker compose up -d
+# Ver estado:      docker compose ps
+# Ver logs:        docker compose logs -f frigate
+
+services:
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    ports:
+      - "1883:1883"
+
+  zigbee2mqtt:
+    container_name: zigbee2mqtt
+    image: koenkk/zigbee2mqtt:latest
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    volumes:
+      - ./zigbee2mqtt:/app/data
+      - /run/udev:/run/udev:ro
+    # Ruta del dongle Sonoff Zigbee. Encontrarla con:
+    #   ls -l /dev/serial/by-id/
+    # y reemplazar la línea de abajo por la que aparezca (empieza con usb-ITead o usb-Silicon_Labs)
+    devices:
+      - ${ZIGBEE_DONGLE:-/dev/ttyACM0}:/dev/ttyACM0
+    ports:
+      - "8081:8081"   # interfaz web de Zigbee2MQTT para emparejar sensores
+    environment:
+      - TZ=America/Argentina/Buenos_Aires
+
+  frigate:
+    container_name: frigate
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    shm_size: "256mb"
+    devices:
+      # GPU integrada Intel: decodifica el video de las cámaras y corre la IA (OpenVINO)
+      - /dev/dri/renderD128
+    volumes:
+      - ./frigate/config.yml:/config/config.yml:ro
+      - frigate-db:/config
+      - ${GRABACIONES_DIR:-./grabaciones}:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    ports:
+      - "5000:5000"   # interfaz web de Frigate (ver cámaras y grabaciones)
+      - "8554:8554"   # re-emisión RTSP
+    environment:
+      - FRIGATE_RTSP_PASSWORD=${CAMARA_PASSWORD}
+      - TZ=America/Argentina/Buenos_Aires
+
+  homeassistant:
+    container_name: homeassistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    # network_mode host: necesario para que descubra dispositivos y funcione la app
+    network_mode: host
+    volumes:
+      - ./homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - mosquitto
+      - frigate
+
+volumes:
+  mosquitto-data:
+  frigate-db:

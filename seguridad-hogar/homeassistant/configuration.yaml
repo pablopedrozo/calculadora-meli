@@ -1,0 +1,37 @@
+# Configuración principal de Home Assistant.
+# Los sensores Zigbee y las cámaras de Frigate se agregan solos vía MQTT
+# (ver GUIA_INSTALACION.md, paso 7: agregar la integración MQTT apuntando a "localhost").
+
+default_config:
+
+automation: !include automations.yaml
+
+# ============ PANEL DE ALARMA ============
+# Tres modos:
+#  - Desarmada
+#  - Armado en casa  (armed_home): solo perímetro (puertas/ventanas), ideal de noche
+#  - Armado ausente  (armed_away): perímetro + movimiento interior + cámaras
+alarm_control_panel:
+  - platform: manual
+    name: Alarma Casa
+    unique_id: alarma_casa
+    code: !secret codigo_alarma
+    code_arm_required: false     # armar sin código; desarmar siempre pide código
+    arming_time: 45              # segundos para salir de casa después de armar
+    delay_time: 30               # segundos para desarmar al entrar antes de que suene
+    trigger_time: 300            # la sirena suena 5 minutos
+    disarmed:
+      trigger_time: 0
+    armed_home:
+      arming_time: 0             # de noche arma al instante
+      delay_time: 30
+
+# Notificación grupal: llega al celular de toda la familia a la vez.
+# Agregar un bloque "- service:" por cada celular con la app instalada
+# (el nombre exacto aparece en Herramientas de desarrollador > Acciones > notify.)
+notify:
+  - platform: group
+    name: familia
+    services:
+      - service: mobile_app_celular_principal
+      # - service: mobile_app_celular_de_ana
