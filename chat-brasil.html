@@ -1,0 +1,452 @@
+<title>Pablos en Brasil</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: full-height WhatsApp group screen — fixed top bar, scrolling message area, docked composer */
+  :root {
+    --bg: #e5ddd5;              /* classic wa paper */
+    --bg-pattern: #d9cfc4;
+    --header: #008069;         /* wa teal-green */
+    --header-fg: #ffffff;
+    --panel: #f0f2f5;
+    --bubble-in: #ffffff;
+    --bubble-out: #d9fdd3;     /* wa outgoing green */
+    --fg: #111b21;
+    --fg-soft: #667781;
+    --tick: #53bdeb;           /* read ticks blue */
+    --accent: #008069;
+    --shadow: rgba(11,20,26,.13);
+    --name1: #d9376e; --name2: #3ba55d; --name3: #e67e22;
+    --name4: #8e44ad; --name5: #2980b9;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b141a;
+      --bg-pattern: #0d171e;
+      --header: #202c33;
+      --header-fg: #e9edef;
+      --panel: #202c33;
+      --bubble-in: #202c33;
+      --bubble-out: #005c4b;
+      --fg: #e9edef;
+      --fg-soft: #8696a0;
+      --tick: #53bdeb;
+      --accent: #00a884;
+      --shadow: rgba(0,0,0,.35);
+      --name1: #ff7eb0; --name2: #78d6a0; --name3: #f0a868;
+      --name4: #c78ae6; --name5: #6bb3e8;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b141a;
+    --bg-pattern: #0d171e;
+    --header: #202c33;
+    --header-fg: #e9edef;
+    --panel: #202c33;
+    --bubble-in: #202c33;
+    --bubble-out: #005c4b;
+    --fg: #e9edef;
+    --fg-soft: #8696a0;
+    --tick: #53bdeb;
+    --accent: #00a884;
+    --shadow: rgba(0,0,0,.35);
+    --name1: #ff7eb0; --name2: #78d6a0; --name3: #f0a868;
+    --name4: #c78ae6; --name5: #6bb3e8;
+    color-scheme: dark;
+  }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    max-width: 680px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  /* ---- Header ---- */
+  .topbar {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 10;
+    background: var(--header);
+    color: var(--header-fg);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-block: 9px;
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+    box-shadow: 0 1px 3px var(--shadow);
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    height: env(safe-area-inset-top, 0px);
+    z-index: 10;
+    background: var(--header);
+  }
+  .back { font-size: 24px; line-height: 1; opacity: .95; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    flex: none;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 15px;
+    background: linear-gradient(135deg, #25d366, #0b7d5b);
+    color: #fff;
+  }
+  .group-meta { min-width: 0; flex: 1; line-height: 1.25; }
+  .group-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .group-subtitle {
+    font-size: 12.5px; color: var(--header-fg); opacity: .75;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .topbar-actions { display: flex; gap: 18px; font-size: 19px; opacity: .95; }
+
+  /* ---- Messages ---- */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px max(10px, env(safe-area-inset-left, 0px)) 10px max(10px, env(safe-area-inset-right, 0px));
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(var(--bg-pattern) 1px, transparent 1px),
+      radial-gradient(var(--bg-pattern) 1px, transparent 1px);
+    background-size: 28px 28px;
+    background-position: 0 0, 14px 14px;
+  }
+
+  .daydivider { align-self: center; margin: 8px 0; }
+  .daydivider span {
+    background: var(--panel);
+    color: var(--fg-soft);
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    box-shadow: 0 1px 1px var(--shadow);
+  }
+  .notice {
+    align-self: center;
+    background: var(--panel);
+    color: var(--fg-soft);
+    font-size: 12.5px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    margin: 4px 0;
+    text-align: center;
+    max-width: 85%;
+    box-shadow: 0 1px 1px var(--shadow);
+  }
+
+  .row { display: flex; max-width: 100%; }
+  .row.in { justify-content: flex-start; }
+  .row.out { justify-content: flex-end; }
+
+  .bubble {
+    position: relative;
+    max-width: min(78%, 480px);
+    padding: 6px 9px 7px;
+    border-radius: 8px;
+    box-shadow: 0 1px .5px var(--shadow);
+    font-size: 14.6px;
+    line-height: 1.33;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  .row.in .bubble { background: var(--bubble-in); border-top-left-radius: 0; }
+  .row.out .bubble { background: var(--bubble-out); border-top-right-radius: 0; }
+
+  /* little tail */
+  .row.in .bubble::before,
+  .row.out .bubble::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    width: 10px; height: 13px;
+  }
+  .row.in .bubble::before {
+    left: -8px;
+    background: var(--bubble-in);
+    clip-path: polygon(100% 0, 0 0, 100% 100%);
+    border-top-left-radius: 2px;
+  }
+  .row.out .bubble::before {
+    right: -8px;
+    background: var(--bubble-out);
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+    border-top-right-radius: 2px;
+  }
+
+  .sender { font-size: 13px; font-weight: 600; margin-bottom: 1px; }
+  .c1 { color: var(--name1); } .c2 { color: var(--name2); }
+  .c3 { color: var(--name3); } .c4 { color: var(--name4); } .c5 { color: var(--name5); }
+
+  .text { white-space: pre-wrap; }
+  .meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    float: right;
+    margin: 6px 0 -2px 8px;
+    font-size: 11px;
+    color: var(--fg-soft);
+    user-select: none;
+  }
+  .ticks { color: var(--tick); font-size: 13px; line-height: 1; }
+
+  /* ---- Composer ---- */
+  .composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 7px;
+    padding: 7px max(8px, env(safe-area-inset-left, 0px)) calc(7px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-right, 0px));
+    background: var(--panel);
+  }
+  .input-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bubble-in);
+    border-radius: 22px;
+    padding: 6px 12px;
+    box-shadow: 0 1px .5px var(--shadow);
+  }
+  .input-wrap .emoji { color: var(--fg-soft); font-size: 20px; flex: none; }
+  textarea {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 15px;
+    line-height: 1.3;
+    max-height: 120px;
+    padding: 3px 0;
+  }
+  textarea::placeholder { color: var(--fg-soft); }
+  .send {
+    flex: none;
+    width: 46px; height: 46px;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 20px;
+    display: grid; place-items: center;
+    cursor: pointer;
+    box-shadow: 0 1px 2px var(--shadow);
+    transition: transform .08s ease;
+  }
+  .send:active { transform: scale(.9); }
+  .send:focus-visible { outline: 3px solid var(--tick); outline-offset: 2px; }
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <span class="back" aria-hidden="true">&#8249;</span>
+    <div class="avatar" aria-hidden="true">🇧🇷</div>
+    <div class="group-meta">
+      <div class="group-name">Vacaciones Brasil ☀️🌴</div>
+      <div class="group-subtitle">Pablo 1, Pablo 2, Pablo 3, Pablo 4, Pablo 5</div>
+    </div>
+    <div class="topbar-actions" aria-hidden="true">
+      <span>📹</span><span>📞</span><span>⋮</span>
+    </div>
+  </header>
+
+  <main class="messages" id="messages">
+    <div class="daydivider"><span>HOY</span></div>
+    <div class="notice">🔒 Los mensajes están cifrados de extremo a extremo.</div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c1">Pablo 1</div>
+        <div class="text">Chicos ya reservé el hotel en Río, frente a la playa de Copacabana 🏖️</div>
+        <span class="meta">09:12</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c2">Pablo 2</div>
+        <div class="text">Geniooo 🙌 cuánto nos sale por cabeza?</div>
+        <span class="meta">09:13</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c1">Pablo 1</div>
+        <div class="text">Como 320 reales la noche dividido entre los 5, una ganga</div>
+        <span class="meta">09:14</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c3">Pablo 3</div>
+        <div class="text">Yo me encargo de los pasajes entonces ✈️ salimos el viernes a la noche así aprovechamos todo el finde largo</div>
+        <span class="meta">09:16</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c4">Pablo 4</div>
+        <div class="text">Pau yo quiero ir sí o sí al Cristo Redentor y al Pan de Azúcar 🗻</div>
+        <span class="meta">09:18</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c5">Pablo 5</div>
+        <div class="text">Obvio, y una noche nos vamos a bailar a Lapa 🎶🍺</div>
+        <span class="meta">09:19</span>
+      </div>
+    </div>
+
+    <div class="row out">
+      <div class="bubble">
+        <div class="text">Yo sumo caipirinha ilimitada a la lista 😎🍹</div>
+        <span class="meta">09:20 <span class="ticks">✓✓</span></span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c2">Pablo 2</div>
+        <div class="text">JAJAJA ese es el espíritu</div>
+        <span class="meta">09:21</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c3">Pablo 3</div>
+        <div class="text">Listo, pasajes comprados ✅ asientos juntos los 5. Nos vemos el viernes 20hs en el aeropuerto, no lleguen tarde eh 😅</div>
+        <span class="meta">09:34</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c4">Pablo 4</div>
+        <div class="text">Hago una lista compartida para repartir los gastos así no nos peleamos después 📝</div>
+        <span class="meta">09:36</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c5">Pablo 5</div>
+        <div class="text">Falta lo más importante… quién lleva el parlante para la playa 🔊</div>
+        <span class="meta">09:41</span>
+      </div>
+    </div>
+
+    <div class="row in">
+      <div class="bubble">
+        <div class="sender c1">Pablo 1</div>
+        <div class="text">Yo lo llevo 🙋‍♂️ ya estoy contando los días, FALTA NADA MUCHACHOS 🇧🇷🔥</div>
+        <span class="meta">09:42</span>
+      </div>
+    </div>
+  </main>
+
+  <form class="composer" id="composer">
+    <div class="input-wrap">
+      <span class="emoji" aria-hidden="true">😊</span>
+      <textarea id="input" rows="1" placeholder="Mensaje" aria-label="Escribí un mensaje"></textarea>
+      <span class="emoji" aria-hidden="true">📎</span>
+    </div>
+    <button class="send" id="send" type="submit" aria-label="Enviar">➤</button>
+  </form>
+</div>
+
+<script>
+  (function () {
+    var messages = document.getElementById('messages');
+    var form = document.getElementById('composer');
+    var input = document.getElementById('input');
+
+    function scrollDown() { messages.scrollTop = messages.scrollHeight; }
+    scrollDown();
+
+    // auto-grow the textarea
+    input.addEventListener('input', function () {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    });
+
+    function now() {
+      var d = new Date();
+      var h = d.getHours(), m = d.getMinutes();
+      return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m);
+    }
+
+    function addMessage(text) {
+      var row = document.createElement('div');
+      row.className = 'row out';
+
+      var bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      var body = document.createElement('div');
+      body.className = 'text';
+      body.textContent = text;
+
+      var meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.appendChild(document.createTextNode(now() + ' '));
+      var ticks = document.createElement('span');
+      ticks.className = 'ticks';
+      ticks.textContent = '✓✓';
+      meta.appendChild(ticks);
+
+      bubble.appendChild(body);
+      bubble.appendChild(meta);
+      row.appendChild(bubble);
+      messages.appendChild(row);
+      scrollDown();
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var text = input.value.trim();
+      if (!text) return;
+      addMessage(text);
+      input.value = '';
+      input.style.height = 'auto';
+      input.focus();
+    });
+
+    // Enter to send, Shift+Enter for newline
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  })();
+</script>
